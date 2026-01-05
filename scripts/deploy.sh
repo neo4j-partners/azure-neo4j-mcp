@@ -2,13 +2,13 @@
 #
 # Neo4j MCP Server - Azure Deployment Script
 #
-# Deploys the Neo4j MCP server to Azure Container Apps.
-# Mirrors the AWS deployment pattern with local Docker build.
+# Deploys the Neo4j MCP server to Azure Container Apps with API key authentication.
+# Uses an Nginx sidecar for API key validation and proxying to the MCP server.
 #
 # Usage:
 #   ./scripts/deploy.sh              # Full deployment
-#   ./scripts/deploy.sh build        # Build Docker image only
-#   ./scripts/deploy.sh push         # Push image to ACR only
+#   ./scripts/deploy.sh build        # Build Docker images only
+#   ./scripts/deploy.sh push         # Push images to ACR only
 #   ./scripts/deploy.sh infra        # Deploy infrastructure only
 #   ./scripts/deploy.sh status       # Show deployment status
 #   ./scripts/deploy.sh test         # Run test client
@@ -69,7 +69,7 @@ command_exists() {
 load_env() {
     if [[ ! -f "$ENV_FILE" ]]; then
         log_error ".env file not found at $ENV_FILE"
-        log_error "Run ./scripts/setup-env.sh to create it"
+        log_error "Copy .env.sample to .env and configure your settings"
         exit 1
     fi
 
@@ -85,22 +85,22 @@ load_env() {
     BASE_NAME="${BASE_NAME:-$DEFAULT_BASE_NAME}"
     ENVIRONMENT="${ENVIRONMENT:-$DEFAULT_ENVIRONMENT}"
     IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_IMAGE_TAG}"
+    NEO4J_DATABASE="${NEO4J_DATABASE:-neo4j}"
 }
 
 # Validate required environment variables
 validate_env() {
     local missing=()
 
-    [[ -z "$AZURE_SUBSCRIPTION_ID" ]] && missing+=("AZURE_SUBSCRIPTION_ID")
-    [[ -z "$AZURE_RESOURCE_GROUP" ]] && missing+=("AZURE_RESOURCE_GROUP")
-    [[ -z "$AZURE_LOCATION" ]] && missing+=("AZURE_LOCATION")
+    [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]] && missing+=("AZURE_SUBSCRIPTION_ID")
+    [[ -z "${AZURE_RESOURCE_GROUP:-}" ]] && missing+=("AZURE_RESOURCE_GROUP")
+    [[ -z "${AZURE_LOCATION:-}" ]] && missing+=("AZURE_LOCATION")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_error "Missing required environment variables:"
         for var in "${missing[@]}"; do
             log_error "  - $var"
         done
-        log_error "Run ./scripts/setup-env.sh to configure"
         exit 1
     fi
 }
@@ -109,9 +109,10 @@ validate_env() {
 validate_neo4j_env() {
     local missing=()
 
-    [[ -z "$NEO4J_URI" ]] && missing+=("NEO4J_URI")
-    [[ -z "$NEO4J_PASSWORD" ]] && missing+=("NEO4J_PASSWORD")
-    [[ -z "$MCP_API_KEY" ]] && missing+=("MCP_API_KEY")
+    [[ -z "${NEO4J_URI:-}" ]] && missing+=("NEO4J_URI")
+    [[ -z "${NEO4J_USERNAME:-}" ]] && missing+=("NEO4J_USERNAME")
+    [[ -z "${NEO4J_PASSWORD:-}" ]] && missing+=("NEO4J_PASSWORD")
+    [[ -z "${MCP_API_KEY:-}" ]] && missing+=("MCP_API_KEY")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_error "Missing required Neo4j/MCP environment variables:"
@@ -143,8 +144,8 @@ check_prerequisites() {
     fi
     log_success "Azure CLI authenticated"
 
-    # Set the subscription explicitly to avoid multi-subscription issues
-    if [[ -n "$AZURE_SUBSCRIPTION_ID" ]]; then
+    # Set the subscription explicitly
+    if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
         az account set --subscription "$AZURE_SUBSCRIPTION_ID" 2>/dev/null || {
             log_error "Failed to set subscription: $AZURE_SUBSCRIPTION_ID"
             exit 1
@@ -162,7 +163,6 @@ check_prerequisites() {
     # jq (for parsing JSON outputs)
     if ! command_exists jq; then
         log_warn "jq not installed - status output may be limited"
-        log_warn "Install from: https://stedolan.github.io/jq/download/"
     else
         log_success "jq installed"
     fi
@@ -199,10 +199,10 @@ ensure_resource_group() {
 # =============================================================================
 
 cmd_build() {
-    log_step "Building Docker image"
+    log_step "Building Docker images"
 
     # Check for Neo4j MCP repo
-    if [[ -z "$NEO4J_MCP_REPO" ]]; then
+    if [[ -z "${NEO4J_MCP_REPO:-}" ]]; then
         log_error "NEO4J_MCP_REPO not set in .env"
         log_error "Set it to the path of the cloned https://github.com/neo4j/mcp repository"
         exit 1
@@ -218,28 +218,23 @@ cmd_build() {
         exit 1
     fi
 
-    # Get ACR name from deployment outputs or generate it
-    local acr_name
-    acr_name=$(get_acr_name)
-
-    if [[ -z "$acr_name" ]]; then
-        log_error "Cannot determine ACR name. Deploy infrastructure first."
-        exit 1
-    fi
-
-    local image_name="${acr_name}.azurecr.io/neo4j-mcp-server:${IMAGE_TAG}"
-
-    log_info "Building image: $image_name"
-    log_info "Source: $NEO4J_MCP_REPO"
-
-    # Build for linux/amd64 (Azure Container Apps architecture)
+    # Build MCP server image
+    log_info "Building Neo4j MCP Server image..."
     docker buildx build \
         --platform linux/amd64 \
-        --tag "$image_name" \
+        --tag neo4j-mcp-server:${IMAGE_TAG} \
         --load \
         "$NEO4J_MCP_REPO"
+    log_success "MCP Server image built: neo4j-mcp-server:${IMAGE_TAG}"
 
-    log_success "Docker image built: $image_name"
+    # Build auth proxy image
+    log_info "Building auth proxy image..."
+    docker buildx build \
+        --platform linux/amd64 \
+        --tag mcp-auth-proxy:${IMAGE_TAG} \
+        --load \
+        "${SCRIPT_DIR}/nginx"
+    log_success "Auth proxy image built: mcp-auth-proxy:${IMAGE_TAG}"
 }
 
 # =============================================================================
@@ -247,57 +242,98 @@ cmd_build() {
 # =============================================================================
 
 cmd_push() {
-    log_step "Pushing Docker image to ACR"
+    log_step "Pushing Docker images to ACR"
 
     local acr_name
     acr_name=$(get_acr_name)
 
     if [[ -z "$acr_name" ]]; then
-        log_error "Cannot determine ACR name. Deploy infrastructure first."
+        log_error "Cannot determine ACR name. Deploy foundation infrastructure first."
         exit 1
     fi
 
-    local image_name="${acr_name}.azurecr.io/neo4j-mcp-server:${IMAGE_TAG}"
+    local acr_server="${acr_name}.azurecr.io"
 
     # Login to ACR
     log_info "Logging in to ACR: $acr_name"
     az acr login --name "$acr_name"
 
-    # Push image
-    log_info "Pushing image: $image_name"
-    docker push "$image_name"
+    # Tag and push MCP server image
+    log_info "Pushing Neo4j MCP Server image..."
+    docker tag neo4j-mcp-server:${IMAGE_TAG} "${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
+    docker push "${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
+    log_success "MCP Server image pushed"
 
-    log_success "Image pushed to ACR"
+    # Tag and push auth proxy image
+    log_info "Pushing auth proxy image..."
+    docker tag mcp-auth-proxy:${IMAGE_TAG} "${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
+    docker push "${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
+    log_success "Auth proxy image pushed"
 }
 
 # =============================================================================
 # Infrastructure Deployment
 # =============================================================================
 
-cmd_infra() {
-    log_step "Deploying Bicep infrastructure"
+deploy_foundation() {
+    log_step "Deploying foundation infrastructure (ACR, Key Vault, etc.)"
 
-    ensure_resource_group
+    validate_neo4j_env
 
-    log_info "Deploying to resource group: $AZURE_RESOURCE_GROUP"
-    log_info "Location: $AZURE_LOCATION"
-    log_info "Base name: $BASE_NAME"
-    log_info "Environment: $ENVIRONMENT"
+    # Export environment variables for bicepparam to read
+    # Use placeholder images first to create ACR
+    export MCP_SERVER_IMAGE="mcr.microsoft.com/hello-world:latest"
+    export AUTH_PROXY_IMAGE="mcr.microsoft.com/hello-world:latest"
 
-    # Deploy Bicep template
+    # Deploy with placeholder images first to create ACR
     az deployment group create \
         --resource-group "$AZURE_RESOURCE_GROUP" \
         --template-file "$INFRA_DIR/main.bicep" \
-        --parameters \
-            location="$AZURE_LOCATION" \
-            baseName="$BASE_NAME" \
-            environment="$ENVIRONMENT" \
+        --parameters "$INFRA_DIR/main.bicepparam" \
+        --name "neo4j-mcp-foundation-$(date +%Y%m%d%H%M%S)" \
         --output none
+
+    log_success "Foundation infrastructure deployed"
+}
+
+cmd_infra() {
+    log_step "Deploying full infrastructure"
+
+    ensure_resource_group
+    validate_neo4j_env
+
+    # Get ACR name
+    local acr_name
+    acr_name=$(get_acr_name)
+
+    # Export environment variables for bicepparam to read
+    export MCP_SERVER_IMAGE="mcr.microsoft.com/hello-world:latest"
+    export AUTH_PROXY_IMAGE="mcr.microsoft.com/hello-world:latest"
+
+    if [[ -n "$acr_name" ]]; then
+        local acr_server="${acr_name}.azurecr.io"
+        export MCP_SERVER_IMAGE="${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
+        export AUTH_PROXY_IMAGE="${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
+    else
+        log_warn "ACR not found - using placeholder images"
+    fi
+
+    log_info "Deploying to resource group: $AZURE_RESOURCE_GROUP"
+    log_info "Location: $AZURE_LOCATION"
+    log_info "MCP Server image: $MCP_SERVER_IMAGE"
+    log_info "Auth proxy image: $AUTH_PROXY_IMAGE"
+
+    # Deploy Bicep template (parameters read from environment via bicepparam)
+    az deployment group create \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --template-file "$INFRA_DIR/main.bicep" \
+        --parameters "$INFRA_DIR/main.bicepparam" \
+        --name "neo4j-mcp-deploy-$(date +%Y%m%d%H%M%S)"
 
     log_success "Infrastructure deployed"
 
-    # Show outputs
-    cmd_status
+    # Generate access file
+    generate_mcp_access
 }
 
 # =============================================================================
@@ -306,11 +342,19 @@ cmd_infra() {
 
 get_deployment_output() {
     local output_name="$1"
-    az deployment group show \
+    local deployment_name
+    deployment_name=$(az deployment group list \
         --resource-group "$AZURE_RESOURCE_GROUP" \
-        --name "main" \
-        --query "properties.outputs.${output_name}.value" \
-        --output tsv 2>/dev/null || echo ""
+        --query "[?contains(name, 'neo4j-mcp')].name | [0]" \
+        --output tsv 2>/dev/null || echo "")
+
+    if [[ -n "$deployment_name" ]]; then
+        az deployment group show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$deployment_name" \
+            --query "properties.outputs.${output_name}.value" \
+            --output tsv 2>/dev/null || echo ""
+    fi
 }
 
 get_acr_name() {
@@ -349,46 +393,44 @@ cmd_status() {
     echo "Location: $AZURE_LOCATION"
     echo ""
 
-    # Check if deployment exists
-    if ! az deployment group show \
-        --resource-group "$AZURE_RESOURCE_GROUP" \
-        --name "main" >/dev/null 2>&1; then
-        log_warn "No deployment found in resource group"
+    # Check if resource group exists
+    if ! az group show --name "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+        log_warn "Resource group does not exist"
         return
     fi
 
-    echo "Deployment Outputs:"
-    echo "-------------------"
-
-    # Get all outputs
-    local outputs
-    outputs=$(az deployment group show \
+    # List resources
+    echo "Resources:"
+    az resource list \
         --resource-group "$AZURE_RESOURCE_GROUP" \
-        --name "main" \
-        --query "properties.outputs" \
-        --output json 2>/dev/null)
+        --query "[].{Name:name, Type:type}" \
+        --output table
 
-    if [[ -n "$outputs" && "$outputs" != "null" ]]; then
-        if command_exists jq; then
-            echo "$outputs" | jq -r 'to_entries[] | "  \(.key): \(.value.value)"'
-        else
-            # Fallback without jq - use az cli table output
-            az deployment group show \
-                --resource-group "$AZURE_RESOURCE_GROUP" \
-                --name "main" \
-                --query "properties.outputs" \
-                --output table 2>/dev/null || echo "$outputs"
-        fi
-    else
-        log_warn "No outputs available"
+    echo ""
+
+    # Get deployment outputs
+    local deployment_name
+    deployment_name=$(az deployment group list \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --query "[?contains(name, 'neo4j-mcp')].name | [0]" \
+        --output tsv 2>/dev/null || echo "")
+
+    if [[ -n "$deployment_name" ]]; then
+        echo "Deployment Outputs ($deployment_name):"
+        az deployment group show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$deployment_name" \
+            --query "properties.outputs" \
+            --output table 2>/dev/null || log_warn "Could not fetch outputs"
     fi
 
-    # Check for Container App URL
+    # Container App status
     local app_url
     app_url=$(get_container_app_url)
     if [[ -n "$app_url" ]]; then
         echo ""
         echo "Container App URL: https://$app_url"
+        echo "MCP Endpoint: https://$app_url/mcp"
     fi
 
     echo ""
@@ -401,13 +443,6 @@ cmd_status() {
 cmd_test() {
     log_step "Running test client"
 
-    # Check if MCP_ACCESS.json exists
-    if [[ ! -f "$MCP_ACCESS_FILE" ]]; then
-        log_error "MCP_ACCESS.json not found"
-        log_error "Deploy the full stack first, or create MCP_ACCESS.json manually"
-        exit 1
-    fi
-
     # Check for Python
     if ! command_exists python3; then
         log_error "Python 3 is required for the test client"
@@ -418,13 +453,12 @@ cmd_test() {
     local test_client="$PROJECT_ROOT/client/test_client.py"
     if [[ ! -f "$test_client" ]]; then
         log_error "Test client not found at $test_client"
-        log_error "Test client will be implemented in Phase 6"
         exit 1
     fi
 
     # Run test client
-    cd "$PROJECT_ROOT/client"
-    python3 test_client.py
+    cd "$PROJECT_ROOT"
+    python3 "$test_client"
 
     log_success "Tests completed"
 }
@@ -447,33 +481,32 @@ generate_mcp_access() {
     cat > "$MCP_ACCESS_FILE" << EOF
 {
   "endpoint": "https://${app_url}",
+  "mcp_path": "/mcp",
   "api_key": "${MCP_API_KEY}",
-  "transport": "http",
-  "port": 443,
+  "transport": "streamable-http",
+  "authentication": {
+    "type": "api_key",
+    "header": "Authorization",
+    "prefix": "Bearer",
+    "alternative_header": "X-API-Key"
+  },
   "tools": [
     "get-schema",
     "read-cypher",
-    "write-cypher",
-    "list-gds-procedures"
+    "write-cypher"
   ],
-  "example_request": {
-    "method": "POST",
-    "url": "https://${app_url}/mcp/v1/tools/call",
-    "headers": {
-      "Authorization": "Bearer ${MCP_API_KEY}",
-      "Content-Type": "application/json"
-    },
-    "body": {
-      "name": "get-schema",
-      "arguments": {}
-    }
-  },
-  "claude_desktop_config": {
+  "example_curl": "curl -X POST 'https://${app_url}/mcp' -H 'Authorization: Bearer YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}'",
+  "mcp_client_config": {
     "mcpServers": {
       "neo4j": {
-        "url": "https://${app_url}",
-        "headers": {
-          "Authorization": "Bearer ${MCP_API_KEY}"
+        "url": "https://${app_url}/mcp",
+        "transport": {
+          "type": "streamable-http",
+          "options": {
+            "headers": {
+              "Authorization": "Bearer YOUR_API_KEY"
+            }
+          }
         }
       }
     }
@@ -482,7 +515,39 @@ generate_mcp_access() {
 EOF
 
     log_success "Generated MCP_ACCESS.json"
-    log_info "Endpoint: https://${app_url}"
+    log_info "Endpoint: https://${app_url}/mcp"
+}
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+
+cmd_cleanup() {
+    log_step "Cleanup"
+
+    log_warn "This will delete ALL resources in resource group: $AZURE_RESOURCE_GROUP"
+    read -p "Are you sure? (y/N) " -n 1 -r
+    echo
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Cleanup cancelled"
+        return
+    fi
+
+    log_info "Deleting resource group..."
+    az group delete \
+        --name "$AZURE_RESOURCE_GROUP" \
+        --yes \
+        --no-wait
+
+    log_success "Resource group deletion initiated (running in background)"
+    log_info "Note: Key Vault will be soft-deleted and recoverable for 7 days"
+
+    # Clean up local files
+    if [[ -f "$MCP_ACCESS_FILE" ]]; then
+        rm -f "$MCP_ACCESS_FILE"
+        log_info "Removed MCP_ACCESS.json"
+    fi
 }
 
 # =============================================================================
@@ -494,17 +559,24 @@ cmd_deploy() {
 
     validate_neo4j_env
 
-    # Step 1: Deploy infrastructure
-    cmd_infra
+    # Step 1: Ensure resource group
+    ensure_resource_group
 
-    # Step 2: Build Docker image
+    # Step 2: Deploy foundation infrastructure (creates ACR)
+    log_info "Phase 1: Deploying foundation infrastructure..."
+    deploy_foundation
+
+    # Step 3: Build Docker images
+    log_info "Phase 2: Building container images..."
     cmd_build
 
-    # Step 3: Push to ACR
+    # Step 4: Push to ACR
+    log_info "Phase 3: Pushing images to ACR..."
     cmd_push
 
-    # Step 4: Generate access file
-    generate_mcp_access
+    # Step 5: Deploy full infrastructure with correct images
+    log_info "Phase 4: Deploying container app..."
+    cmd_infra
 
     echo ""
     log_success "Deployment complete!"
@@ -527,33 +599,43 @@ USAGE:
     ./scripts/deploy.sh [COMMAND]
 
 COMMANDS:
-    (none)      Full deployment (infra + build + push)
-    build       Build Docker image locally
-    push        Push Docker image to ACR
+    (none)      Full deployment (foundation + build + push + deploy)
+    build       Build Docker images locally (MCP server + auth proxy)
+    push        Push Docker images to ACR
     infra       Deploy Bicep infrastructure only
     status      Show deployment status and outputs
     test        Run test client to validate deployment
+    cleanup     Delete all resources and clean up
     help        Show this help message
+
+ARCHITECTURE:
+    The deployment creates two containers in a single Container App:
+    - Auth Proxy (Nginx): Validates API keys, proxies to MCP server
+    - MCP Server: Handles MCP protocol requests to Neo4j
+
+    Traffic flow: Internet -> Ingress -> Auth Proxy -> MCP Server -> Neo4j
 
 PREREQUISITES:
     - Azure CLI installed and authenticated (az login)
     - Docker with buildx support
-    - .env file configured (run ./scripts/setup-env.sh)
-    - Neo4j MCP repository cloned (for build command)
+    - .env file configured (copy from .env.sample)
+    - Neo4j MCP repository cloned (NEO4J_MCP_REPO in .env)
 
 EXAMPLES:
-    # First time setup
-    ./scripts/setup-env.sh
+    # Full deployment
     ./scripts/deploy.sh
 
-    # Deploy only infrastructure
-    ./scripts/deploy.sh infra
+    # Build images only
+    ./scripts/deploy.sh build
 
     # Check deployment status
     ./scripts/deploy.sh status
 
+    # Run tests
+    ./scripts/deploy.sh test
+
     # Clean up resources
-    ./scripts/cleanup.sh
+    ./scripts/deploy.sh cleanup
 
 EOF
 }
@@ -566,7 +648,7 @@ main() {
     local command="${1:-deploy}"
 
     # Load environment (except for help)
-    if [[ "$command" != "help" ]]; then
+    if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]]; then
         load_env
         validate_env
         check_prerequisites
@@ -590,6 +672,9 @@ main() {
             ;;
         test)
             cmd_test
+            ;;
+        cleanup)
+            cmd_cleanup
             ;;
         help|--help|-h)
             cmd_help

@@ -30,9 +30,9 @@ param acrPullPrincipalId string
 // Reference: https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
 var acrPullRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
-// Use latest stable API version (2025-04-01)
+// Use latest stable API version (2025-11-01)
 // Reference: https://learn.microsoft.com/en-us/azure/templates/microsoft.containerregistry/registries
-resource containerRegistry 'Microsoft.ContainerRegistry/registries@2025-04-01' = {
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2025-11-01' = {
   name: name
   location: location
   tags: tags

@@ -126,10 +126,29 @@ cleanup_azure_resources() {
         }
     fi
 
+    # Get Key Vault name before deleting resource group (for purging later)
+    local kv_name=""
+    local kv_location=""
+    if az group show --name "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+        kv_name=$(az keyvault list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[0].name" \
+            --output tsv 2>/dev/null || echo "")
+        if [[ -n "$kv_name" ]]; then
+            kv_location=$(az keyvault show \
+                --name "$kv_name" \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --query "location" \
+                --output tsv 2>/dev/null || echo "")
+        fi
+    fi
+
     # Check if resource group exists
     if ! az group show --name "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
         log_info "Resource group '$AZURE_RESOURCE_GROUP' does not exist"
         log_info "Nothing to clean up in Azure"
+        # Still check for soft-deleted Key Vaults to purge
+        purge_deleted_keyvaults
         return
     fi
 
@@ -139,6 +158,9 @@ cleanup_azure_resources() {
     echo ""
     echo "  Resource Group: $AZURE_RESOURCE_GROUP"
     echo "  Subscription:   $AZURE_SUBSCRIPTION_ID"
+    if [[ -n "$kv_name" ]]; then
+        echo "  Key Vault:      $kv_name (will be purged)"
+    fi
     echo ""
 
     # List resources in the group
@@ -164,14 +186,19 @@ cleanup_azure_resources() {
     echo ""
     log_info "Deleting resource group: $AZURE_RESOURCE_GROUP"
 
-    # Delete resource group
-    if [[ "$WAIT" == "true" ]]; then
+    # If we have a Key Vault, we need to wait to purge it
+    # Otherwise, respect the --no-wait flag
+    if [[ -n "$kv_name" ]]; then
+        log_info "Waiting for deletion to complete (required to purge Key Vault)..."
         az group delete \
             --name "$AZURE_RESOURCE_GROUP" \
             --yes
 
         log_success "Resource group deleted"
-    else
+
+        # Purge Key Vault
+        purge_keyvault "$kv_name" "$kv_location"
+    elif [[ "$NO_WAIT" == "true" ]]; then
         az group delete \
             --name "$AZURE_RESOURCE_GROUP" \
             --yes \
@@ -179,7 +206,74 @@ cleanup_azure_resources() {
 
         log_success "Resource group deletion initiated (running in background)"
         log_info "Check status: az group show -n $AZURE_RESOURCE_GROUP"
+    else
+        az group delete \
+            --name "$AZURE_RESOURCE_GROUP" \
+            --yes
+
+        log_success "Resource group deleted"
     fi
+
+    # Check for any soft-deleted Key Vaults to purge
+    purge_deleted_keyvaults
+}
+
+purge_keyvault() {
+    local kv_name="$1"
+    local kv_location="$2"
+
+    log_info "Purging Key Vault: $kv_name"
+
+    # Wait a moment for soft-delete to register
+    sleep 2
+
+    if az keyvault purge --name "$kv_name" --location "$kv_location" 2>/dev/null; then
+        log_success "Key Vault '$kv_name' purged"
+    else
+        log_warn "Could not purge Key Vault '$kv_name' (may not be soft-deleted or already purged)"
+    fi
+}
+
+purge_deleted_keyvaults() {
+    log_step "Checking for soft-deleted Key Vaults to purge"
+
+    # List soft-deleted Key Vaults
+    local deleted_vaults
+    deleted_vaults=$(az keyvault list-deleted \
+        --query "[?contains(name, 'kv')].{name:name, location:properties.location}" \
+        --output tsv 2>/dev/null || echo "")
+
+    if [[ -z "$deleted_vaults" ]]; then
+        log_info "No soft-deleted Key Vaults found"
+        return
+    fi
+
+    echo ""
+    log_warn "Found soft-deleted Key Vaults:"
+    az keyvault list-deleted \
+        --query "[?contains(name, 'kv')].{Name:name, Location:properties.location}" \
+        --output table 2>/dev/null || true
+
+    echo ""
+
+    if [[ "$FORCE" != "true" ]]; then
+        read -rp "Purge all soft-deleted Key Vaults? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            log_info "Skipping Key Vault purge"
+            return
+        fi
+    fi
+
+    # Purge each vault
+    while IFS=$'\t' read -r name location; do
+        if [[ -n "$name" && -n "$location" ]]; then
+            log_info "Purging: $name in $location"
+            az keyvault purge --name "$name" --location "$location" 2>/dev/null || \
+                log_warn "Failed to purge $name"
+        fi
+    done <<< "$deleted_vaults"
+
+    log_success "Soft-deleted Key Vaults purged"
 }
 
 cleanup_acr_images() {
@@ -247,7 +341,7 @@ USAGE:
 
 OPTIONS:
     --force         Skip all confirmation prompts
-    --wait          Wait for resource group deletion to complete
+    --no-wait       Don't wait for deletion (faster, but can't purge Key Vault)
     --local-only    Only clean local generated files (no Azure changes)
     --images-only   Only clean ACR images (keep infrastructure)
     --docker        Also clean Docker build cache
@@ -257,7 +351,7 @@ EXAMPLES:
     # Interactive cleanup (prompts for confirmation)
     ./scripts/cleanup.sh
 
-    # Force cleanup without prompts
+    # Force cleanup without prompts (waits for completion)
     ./scripts/cleanup.sh --force
 
     # Only clean local files
@@ -266,18 +360,24 @@ EXAMPLES:
     # Clean ACR images but keep infrastructure
     ./scripts/cleanup.sh --images-only
 
-    # Full cleanup and wait for completion
-    ./scripts/cleanup.sh --force --wait
+    # Fast cleanup without waiting (won't purge Key Vault)
+    ./scripts/cleanup.sh --force --no-wait
 
 WHAT GETS DELETED:
     Azure Resources (in resource group):
       - Container App (if deployed)
       - Container Apps Environment
       - Azure Container Registry
-      - Key Vault
+      - Key Vault (soft-deleted then PURGED - permanent deletion)
       - Log Analytics Workspace
       - Managed Identity
       - All role assignments
+
+    Key Vault Purging:
+      - Key Vaults are soft-deleted by Azure by default
+      - This script PURGES them (permanent deletion)
+      - Allows reusing the same Key Vault name immediately
+      - Also offers to purge any previously soft-deleted Key Vaults
 
     Local Files:
       - MCP_ACCESS.json
@@ -293,7 +393,7 @@ EOF
 main() {
     # Parse arguments
     FORCE="false"
-    WAIT="false"
+    NO_WAIT="false"
     LOCAL_ONLY="false"
     IMAGES_ONLY="false"
     CLEAN_DOCKER="false"
@@ -303,8 +403,8 @@ main() {
             --force|-f)
                 FORCE="true"
                 ;;
-            --wait|-w)
-                WAIT="true"
+            --no-wait|-n)
+                NO_WAIT="true"
                 ;;
             --local-only|-l)
                 LOCAL_ONLY="true"

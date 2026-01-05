@@ -6,9 +6,9 @@
 // - User-Assigned Managed Identity (for ACR and Key Vault access)
 // - Log Analytics Workspace (for container telemetry)
 // - Azure Container Registry (for storing Docker images)
-// - [Phase 2] Azure Key Vault (for secrets)
-// - [Phase 3] Container Apps Environment
-// - [Phase 4] Container App (Neo4j MCP Server)
+// - Azure Key Vault (for secrets)
+// - Container Apps Environment
+// - Container App (Neo4j MCP Server)
 // =============================================================================
 
 targetScope = 'resourceGroup'
@@ -41,6 +41,36 @@ param tags object = {
 }
 
 // =============================================================================
+// Secure Parameters (Secrets from .env file)
+// =============================================================================
+
+@description('Neo4j database connection URI')
+@secure()
+param neo4jUri string
+
+@description('Neo4j database username')
+@secure()
+param neo4jUsername string
+
+@description('Neo4j database password')
+@secure()
+param neo4jPassword string
+
+@description('Neo4j database name')
+@secure()
+param neo4jDatabase string
+
+@description('MCP API key for authentication')
+@secure()
+param mcpApiKey string
+
+@description('Neo4j MCP Server container image (e.g., myacr.azurecr.io/neo4j-mcp-server:latest)')
+param mcpServerImage string = ''
+
+@description('Auth proxy container image (e.g., myacr.azurecr.io/mcp-auth-proxy:latest)')
+param authProxyImage string = ''
+
+// =============================================================================
 // Variables
 // =============================================================================
 
@@ -51,6 +81,15 @@ var uniqueSuffix = uniqueString(resourceGroup().id)
 var managedIdentityName = '${baseName}-identity-${environment}'
 var logAnalyticsName = '${baseName}-logs-${environment}'
 var containerRegistryName = '${baseName}acr${uniqueSuffix}'  // ACR names must be alphanumeric only
+// Key Vault names: 3-24 chars, alphanumeric and hyphens only
+// Using shorter prefix to stay within limit
+var keyVaultName = 'kv${uniqueSuffix}'
+var containerEnvironmentName = '${baseName}-env-${environment}'
+var containerAppName = '${baseName}-app-${environment}'
+
+// Determine container images - use provided or construct default from ACR
+var effectiveMcpServerImage = !empty(mcpServerImage) ? mcpServerImage : '${containerRegistryName}.azurecr.io/neo4j-mcp-server:latest'
+var effectiveAuthProxyImage = !empty(authProxyImage) ? authProxyImage : '${containerRegistryName}.azurecr.io/mcp-auth-proxy:latest'
 
 // =============================================================================
 // Phase 1: Foundation Resources
@@ -95,22 +134,79 @@ module containerRegistry 'modules/container-registry.bicep' = {
 }
 
 // =============================================================================
-// Phase 2: Secrets and Security (TODO)
+// Phase 2: Secrets and Security
 // =============================================================================
 
-// Key Vault module will be added here
+// Azure Key Vault
+// Stores Neo4j connection credentials and MCP API key
+// Grants Key Vault Secrets User role to managed identity
+module keyVault 'modules/key-vault.bicep' = {
+  name: 'deploy-key-vault'
+  params: {
+    name: keyVaultName
+    location: location
+    tags: tags
+    identityPrincipalId: managedIdentity.outputs.principalId
+    neo4jUri: neo4jUri
+    neo4jUsername: neo4jUsername
+    neo4jPassword: neo4jPassword
+    neo4jDatabase: neo4jDatabase
+    mcpApiKey: mcpApiKey
+  }
+}
 
 // =============================================================================
-// Phase 3: Container Environment (TODO)
+// Phase 3: Container Environment
 // =============================================================================
 
-// Container Apps Environment module will be added here
+// Reference to Log Analytics workspace for listKeys
+resource logAnalyticsWorkspaceRef 'Microsoft.OperationalInsights/workspaces@2025-07-01' existing = {
+  name: logAnalyticsName
+  dependsOn: [
+    logAnalytics
+  ]
+}
+
+// Container Apps Environment
+// Linked to Log Analytics for telemetry and monitoring
+module containerEnvironment 'modules/container-environment.bicep' = {
+  name: 'deploy-container-environment'
+  params: {
+    name: containerEnvironmentName
+    location: location
+    tags: tags
+    logAnalyticsCustomerId: logAnalytics.outputs.customerId
+    logAnalyticsSharedKey: logAnalyticsWorkspaceRef.listKeys().primarySharedKey
+  }
+}
 
 // =============================================================================
-// Phase 4: Container App (TODO)
+// Phase 4: Container App
 // =============================================================================
 
-// Container App module will be added here
+// Container App - Neo4j MCP Server with Auth Proxy
+// Architecture:
+// - Nginx auth proxy (port 8080): Validates API keys, proxies with Basic Auth
+// - MCP server (port 8000): Handles MCP protocol requests to Neo4j
+// Configured with:
+// - Fixed 1 replica for demo consistency
+// - Managed identity for ACR pull and Key Vault access
+// - Key Vault references for sensitive environment variables
+// - External HTTPS ingress through auth proxy
+module containerApp 'modules/container-app.bicep' = {
+  name: 'deploy-container-app'
+  params: {
+    name: containerAppName
+    location: location
+    tags: tags
+    containerAppsEnvironmentId: containerEnvironment.outputs.id
+    managedIdentityId: managedIdentity.outputs.id
+    mcpServerImage: effectiveMcpServerImage
+    authProxyImage: effectiveAuthProxyImage
+    containerRegistryLoginServer: containerRegistry.outputs.loginServer
+    keyVaultName: keyVault.outputs.name
+  }
+}
 
 // =============================================================================
 // Outputs
@@ -143,3 +239,33 @@ output containerRegistryName string = containerRegistry.outputs.name
 
 @description('Container Registry login server')
 output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
+
+// Phase 2 Outputs
+@description('Key Vault name')
+output keyVaultName string = keyVault.outputs.name
+
+@description('Key Vault URI')
+output keyVaultUri string = keyVault.outputs.vaultUri
+
+// Phase 3 Outputs
+@description('Container Apps Environment ID')
+output containerEnvironmentId string = containerEnvironment.outputs.id
+
+@description('Container Apps Environment default domain')
+output containerEnvironmentDefaultDomain string = containerEnvironment.outputs.defaultDomain
+
+// Phase 4 Outputs
+@description('Container App name')
+output containerAppName string = containerApp.outputs.name
+
+@description('Container App FQDN')
+output containerAppFqdn string = containerApp.outputs.fqdn
+
+@description('Container App URL')
+output containerAppUrl string = containerApp.outputs.url
+
+@description('MCP Server container image deployed')
+output mcpServerImage string = effectiveMcpServerImage
+
+@description('Auth proxy container image deployed')
+output authProxyImage string = effectiveAuthProxyImage

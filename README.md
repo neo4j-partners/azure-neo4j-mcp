@@ -5,55 +5,81 @@ Deploy the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Co
 ## Architecture
 
 ```
-                                    Azure Cloud
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                                                              │
-│  ┌─────────────┐                 ┌─────────────────────────────┐            │
-│  │   AI Agent  │──── API Key ───▶│   Azure Container Apps      │            │
-│  │  (Claude)   │     (Bearer)    │   Environment               │            │
-│  └─────────────┘                 │  ┌───────────────────────┐  │            │
-│                                  │  │  Container App        │  │            │
-│                                  │  │  (Neo4j MCP Server)   │  │            │
-│                                  │  │  Port 8000            │  │            │
-│                                  │  │  1 Fixed Instance     │  │            │
-│                                  │  └───────────────────────┘  │            │
-│                                  └─────────────────────────────┘            │
-│                                                   │                          │
-│  ┌────────────────────────────────────────────────┼──────────────────────┐  │
-│  │  Supporting Services                           │                      │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │  │
-│  │  │   Azure     │  │   Azure     │  │    Log      │                   │  │
-│  │  │ Container   │  │  Key Vault  │  │  Analytics  │                   │  │
-│  │  │  Registry   │  │  (Secrets)  │  │ (Telemetry) │                   │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘                   │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                   │                          │
-└───────────────────────────────────────────────────┼──────────────────────────┘
-                                                    │
-                                                    ▼
-                                             ┌─────────────┐
-                                             │  Neo4j Aura │
-                                             │  Database   │
-                                             └─────────────┘
+                                        Azure Cloud
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                    │
+│    ┌─────────────┐                                                                 │
+│    │   AI Agent  │                                                                 │
+│    │  (Claude)   │                                                                 │
+│    └──────┬──────┘                                                                 │
+│           │ API Key (Bearer)                                                       │
+│           ▼                                                                        │
+│    ┌──────────────────────────────────────────────────────────────────────────┐   │
+│    │                    Azure Container Apps Environment                       │   │
+│    │  ┌────────────────────────────────────────────────────────────────────┐  │   │
+│    │  │                      Container App (1 replica)                      │  │   │
+│    │  │  ┌─────────────────────┐         ┌──────────────────────────────┐  │  │   │
+│    │  │  │  Auth Proxy (Nginx) │ ──────► │    Neo4j MCP Server          │  │  │   │
+│    │  │  │  Port 8080          │ Basic   │    Port 8000 (localhost)     │  │  │   │
+│    │  │  │  - API Key Validate │  Auth   │    - MCP Protocol Handler    │  │  │   │
+│    │  │  │  - Rate Limiting    │         │    - Cypher Query Execution  │  │  │   │
+│    │  │  │  - Security Headers │         │    - Schema Discovery        │  │  │   │
+│    │  │  └─────────────────────┘         └──────────────────────────────┘  │  │   │
+│    │  └────────────────────────────────────────────────────────────────────┘  │   │
+│    └──────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+│    ┌──────────────────────────────────────────────────────────────────────────┐   │
+│    │                         Supporting Services                               │   │
+│    │                                                                           │   │
+│    │    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────┐  │   │
+│    │    │  Container  │    │  Key Vault  │    │    Log      │    │ Managed │  │   │
+│    │    │  Registry   │    │  (Secrets)  │    │  Analytics  │    │Identity │  │   │
+│    │    │  (Images)   │    │             │    │ (Telemetry) │    │         │  │   │
+│    │    └─────────────┘    └─────────────┘    └─────────────┘    └─────────┘  │   │
+│    └──────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                    │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+                                   ┌─────────────┐
+                                   │  Neo4j Aura │
+                                   │  Database   │
+                                   └─────────────┘
 ```
 
-### Components
+### Container Architecture
 
-| Component | Purpose |
-|-----------|---------|
-| **Container App** | Runs the Neo4j MCP server (1 fixed instance) |
-| **Container Registry** | Stores Docker images with managed identity auth |
-| **Key Vault** | Securely stores Neo4j credentials and API key |
-| **Log Analytics** | Collects container logs and metrics |
-| **Managed Identity** | Enables passwordless auth to ACR and Key Vault |
+The Container App runs two containers as sidecars:
+
+| Container | Port | Purpose |
+|-----------|------|---------|
+| **Auth Proxy (Nginx)** | 8080 (external) | Validates API keys, applies rate limiting, adds security headers, proxies to MCP server with Basic Auth |
+| **MCP Server** | 8000 (localhost) | Handles MCP protocol requests, executes Cypher queries against Neo4j |
+
+### Supporting Services
+
+| Service | Purpose |
+|---------|---------|
+| **Container Registry** | Stores Docker images with managed identity authentication |
+| **Key Vault** | Securely stores Neo4j credentials and MCP API key |
+| **Log Analytics** | Collects container logs and metrics for monitoring |
+| **Managed Identity** | Enables passwordless authentication to ACR and Key Vault |
 
 ### Authentication Flow
 
 ```
-AI Agent ──► API Key (Bearer Token) ──► Container App ──► Neo4j MCP Server ──► Neo4j Database
+┌──────────┐      API Key       ┌────────────┐     Basic Auth     ┌────────────┐     Cypher      ┌───────────┐
+│ AI Agent │ ─────────────────► │ Auth Proxy │ ─────────────────► │ MCP Server │ ──────────────► │  Neo4j    │
+│          │   Bearer Token     │  (Nginx)   │  (injected from    │            │   bolt+s://     │  Database │
+└──────────┘                    │            │   Key Vault)       │            │                 └───────────┘
+                                └────────────┘                    └────────────┘
 ```
 
-Clients authenticate using an API key passed in the `Authorization: Bearer <API_KEY>` header.
+1. Client sends request with `Authorization: Bearer <API_KEY>` or `X-API-Key: <API_KEY>`
+2. Auth proxy validates the API key against Key Vault secret
+3. If valid, proxy injects Basic Auth credentials and forwards to MCP server
+4. MCP server processes the request and queries Neo4j
+5. Response flows back through the proxy to the client
 
 ## Quick Start
 
@@ -95,19 +121,20 @@ cp .env.sample .env
 ### 3. Deploy
 
 ```bash
-./deploy.sh
+./scripts/deploy.sh
 ```
 
 This will:
-1. Build the Neo4j MCP server Docker image locally
-2. Push the image to Azure Container Registry
-3. Deploy all Azure infrastructure via Bicep
-4. Generate `MCP_ACCESS.json` with connection details
+1. Deploy foundation infrastructure (ACR, Key Vault, Log Analytics)
+2. Build the Neo4j MCP server and auth proxy Docker images locally
+3. Push images to Azure Container Registry
+4. Deploy Container App with both containers
+5. Generate `MCP_ACCESS.json` with connection details
 
 ### 4. Test the Deployment
 
 ```bash
-./deploy.sh test
+./scripts/deploy.sh test
 ```
 
 ### 5. Use with AI Agents
@@ -133,41 +160,56 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 
 ## Commands
 
+### Deployment
+
 | Command | Description |
 |---------|-------------|
 | `./scripts/setup-env.sh` | Configure .env file from Azure CLI context |
 | `./scripts/deploy.sh` | Full deployment (build, push, infrastructure) |
-| `./scripts/deploy.sh build` | Build Docker image locally |
-| `./scripts/deploy.sh push` | Push image to ACR |
+| `./scripts/deploy.sh build` | Build Docker images locally |
+| `./scripts/deploy.sh push` | Push images to ACR |
 | `./scripts/deploy.sh infra` | Deploy Bicep infrastructure only |
 | `./scripts/deploy.sh status` | Show deployment status and outputs |
 | `./scripts/deploy.sh test` | Run test client to validate |
-| `./scripts/cleanup.sh` | Delete all Azure resources |
+
+### Cleanup
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/cleanup.sh` | Delete all resources (interactive, waits for completion) |
+| `./scripts/cleanup.sh --force` | Delete without prompts, purge Key Vault |
+| `./scripts/cleanup.sh --force --no-wait` | Fast delete without waiting (can't purge Key Vault) |
+| `./scripts/cleanup.sh --local-only` | Only remove local generated files |
+
+**Note:** Azure Key Vault uses soft-delete by default. The cleanup script automatically purges Key Vaults (permanent deletion) so you can reuse the same names immediately.
 
 ## Project Structure
 
 ```
 azure-neo4j-mcp/
 ├── infra/
-│   ├── main.bicep                # Main Bicep template
-│   ├── main.bicepparam           # Deployment parameters
+│   ├── main.bicep                  # Main Bicep template (orchestrates all modules)
+│   ├── main.bicepparam             # Deployment parameters
 │   └── modules/
-│       ├── managed-identity.bicep
-│       ├── log-analytics.bicep
-│       ├── container-registry.bicep
-│       ├── key-vault.bicep
-│       ├── container-environment.bicep
-│       └── container-app.bicep
+│       ├── managed-identity.bicep  # User-assigned managed identity
+│       ├── log-analytics.bicep     # Log Analytics workspace
+│       ├── container-registry.bicep # Azure Container Registry
+│       ├── key-vault.bicep         # Azure Key Vault with secrets
+│       ├── container-environment.bicep # Container Apps environment
+│       └── container-app.bicep     # Container App with sidecar
 ├── scripts/
-│   ├── setup-env.sh              # Environment setup script
-│   ├── deploy.sh                 # Deployment script
-│   └── cleanup.sh                # Resource cleanup script
+│   ├── nginx/
+│   │   ├── nginx.conf              # OpenResty/Lua auth proxy config
+│   │   └── Dockerfile              # Auth proxy container image
+│   ├── setup-env.sh                # Environment setup script
+│   ├── deploy.sh                   # Deployment script
+│   └── cleanup.sh                  # Resource cleanup script
 ├── client/
-│   ├── test_client.py            # Test client
-│   └── requirements.txt
-├── .env.sample                   # Environment template
-├── AZURE_DEPLOY.md               # Detailed proposal/spec
-└── README.md                     # This file
+│   ├── test_client.py              # Deployment validation client
+│   └── requirements.txt            # Python dependencies (stdlib only)
+├── .env.sample                     # Environment template
+├── AZURE_DEPLOY_v2.md              # Detailed implementation proposal
+└── README.md                       # This file
 ```
 
 ## MCP Tools Available
@@ -191,17 +233,31 @@ azure-neo4j-mcp/
 
 ## Security
 
-- **API Key Authentication**: All requests require a valid Bearer token
-- **HTTPS Only**: TLS enforced by Container Apps ingress
-- **Managed Identity**: No credentials stored in code or config files
-- **Key Vault**: All secrets stored securely with RBAC access control
-- **No Admin User**: Container Registry uses managed identity, not admin credentials
+### Network Security
+- **HTTPS Only**: TLS enforced by Container Apps ingress, HTTP not allowed
+- **Internal MCP Server**: MCP server listens only on localhost, not directly accessible
+
+### Authentication & Authorization
+- **API Key Authentication**: All requests require `Authorization: Bearer <KEY>` or `X-API-Key` header
+- **Managed Identity**: Passwordless authentication to ACR and Key Vault
+- **Key Vault RBAC**: Secrets accessed via role-based access control, no access policies
+
+### Request Protection
+- **Rate Limiting**: 10 requests per second per IP address (configurable)
+- **Request Size Limits**: Maximum 1MB request body to prevent abuse
+- **Security Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy
+
+### Secret Management
+- **Key Vault**: All secrets (Neo4j credentials, API key) stored in Azure Key Vault
+- **No Hardcoded Secrets**: Secrets injected at runtime via Key Vault references
+- **No Admin Users**: Container Registry uses managed identity, not admin credentials
 
 ## Documentation
 
-- [AZURE_DEPLOY.md](./AZURE_DEPLOY.md) - Detailed deployment proposal and implementation status
-- [Neo4j MCP Server](https://github.com/neo4j/mcp) - Official Neo4j MCP server documentation
+- [AZURE_DEPLOY_v2.md](./AZURE_DEPLOY_v2.md) - Detailed architecture and implementation documentation
+- [Neo4j MCP Server](https://github.com/neo4j/mcp) - Official Neo4j MCP server repository
 - [Model Context Protocol](https://modelcontextprotocol.io/) - MCP specification
+- [Azure Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/) - Azure Container Apps documentation
 
 ## License
 

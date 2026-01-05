@@ -393,6 +393,9 @@ The following API versions are used based on latest best practices (January 2025
 | Log Analytics | `2025-02-01` | [Microsoft.OperationalInsights](https://learn.microsoft.com/en-us/azure/templates/microsoft.operationalinsights/workspaces) |
 | Container Registry | `2025-04-01` | [Microsoft.ContainerRegistry](https://learn.microsoft.com/en-us/azure/templates/microsoft.containerregistry/registries) |
 | Role Assignments | `2022-04-01` | [Microsoft.Authorization](https://learn.microsoft.com/en-us/azure/templates/microsoft.authorization/roleassignments) |
+| Key Vault | `2024-04-01-preview` | [Microsoft.KeyVault](https://learn.microsoft.com/en-us/azure/templates/microsoft.keyvault/vaults) |
+| Container Apps Environment | `2024-03-01` | [Microsoft.App/managedEnvironments](https://learn.microsoft.com/en-us/azure/templates/microsoft.app/managedenvironments) |
+| Container App | `2024-03-01` | [Microsoft.App/containerApps](https://learn.microsoft.com/en-us/azure/templates/microsoft.app/containerapps) |
 
 ---
 
@@ -427,28 +430,69 @@ infra/
 - **Log Analytics**: Configured with 30-day retention for cost optimization
 - **Naming**: Uses `uniqueString(resourceGroup().id)` for globally unique ACR names
 
-### Phase 2: Secrets and Security
+### Phase 2: Secrets and Security - COMPLETED
 
-1. Create Bicep module for Azure Key Vault with RBAC authorization enabled
-2. Configure RBAC role assignment granting managed identity Key Vault Secrets User permission
-3. Create secrets for Neo4j connection parameters and MCP API key
-4. Validate managed identity can retrieve secrets
+| Task | Status | File |
+|------|--------|------|
+| Create Bicep module for Azure Key Vault with RBAC authorization | Done | `infra/modules/key-vault.bicep` |
+| Configure RBAC role assignment granting managed identity Key Vault Secrets User | Done | Included in `key-vault.bicep` |
+| Create secrets for Neo4j connection parameters and MCP API key | Done | Included in `key-vault.bicep` |
 
-### Phase 3: Container Environment
+**Key Implementation Details:**
 
-1. Create Bicep module for Container Apps Environment linked to Log Analytics
-2. Configure environment for consumption-based workload profile
-3. Validate environment creation and logging integration
+- **RBAC Authorization**: Enabled by default, no access policies needed
+- **Soft Delete**: Enabled with 7-day retention (minimum for demo cleanup)
+- **Purge Protection**: Disabled to allow full cleanup during development
+- **Secrets Created**: `neo4j-uri`, `neo4j-username`, `neo4j-password`, `neo4j-database`, `mcp-api-key`
+- **Naming**: Uses `kv${uniqueString(resourceGroup().id)}` to stay within 24-character limit
 
-### Phase 4: Container App
+### Phase 3: Container Environment - COMPLETED
 
-1. Create Bicep module for Container App with fixed 1 replica
-2. Configure managed identity for image pull authentication
-3. Configure Key Vault references for all environment variables including MCP_API_KEY
-4. Set container resource limits (CPU: 0.5, Memory: 1Gi)
-5. Configure HTTP ingress on port 8000 with external access
-6. Configure API key validation using the MCP_API_KEY from Key Vault
-7. Validate container starts and responds to authenticated requests
+| Task | Status | File |
+|------|--------|------|
+| Create Bicep module for Container Apps Environment linked to Log Analytics | Done | `infra/modules/container-environment.bicep` |
+| Configure environment for consumption-based workload profile | Done | Default Consumption profile |
+| Zone redundancy disabled for cost optimization | Done | For demo simplicity |
+
+**Key Implementation Details:**
+
+- **Workload Profile**: Consumption (serverless, pay-per-use)
+- **Log Analytics Integration**: Configured via shared key authentication
+- **Zone Redundancy**: Disabled for demo (reduces cost and complexity)
+
+### Phase 4: Container App - COMPLETED
+
+| Task | Status | File |
+|------|--------|------|
+| Create Bicep module for Container App with fixed 1 replica | Done | `infra/modules/container-app.bicep` |
+| Configure managed identity for image pull authentication | Done | User-assigned identity for ACR |
+| Configure Key Vault references for all environment variables | Done | All secrets from Key Vault |
+| Set container resource limits (CPU: 0.5, Memory: 1Gi) | Done | Consumption tier limits |
+| Configure HTTP ingress on port 8000 with external access | Done | HTTPS-only external ingress |
+| Configure health probes | Done | TCP liveness/readiness probes |
+
+**Key Implementation Details:**
+
+- **Scale**: Fixed at exactly 1 replica (minReplicas: 1, maxReplicas: 1)
+- **Identity**: User-assigned managed identity for both ACR pull and Key Vault access
+- **Secrets**: All sensitive values retrieved from Key Vault at runtime
+- **Environment Variables**:
+  - `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` (from Key Vault)
+  - `MCP_API_KEY` (from Key Vault)
+  - `MCP_TRANSPORT=streamable-http`, `MCP_PORT=8000` (hardcoded)
+- **Health Probes**: TCP-based probes (update to HTTP if MCP server exposes health endpoint)
+- **Ingress**: External HTTPS on port 443, targeting container port 8000
+
+**Files Created (Phases 2-4):**
+```
+infra/
+├── main.bicep                    # Updated with all phases
+├── main.bicepparam               # Updated with secure parameter documentation
+└── modules/
+    ├── key-vault.bicep           # Key Vault with secrets
+    ├── container-environment.bicep # Container Apps Environment
+    └── container-app.bicep       # Neo4j MCP Server Container App
+```
 
 ### Phase 5: Deployment Automation
 
@@ -511,6 +555,181 @@ Before considering deployment complete, verify:
 5. Execute deployment with `./deploy.sh`
 6. Validate with `./deploy.sh test`
 7. Use MCP_ACCESS.json to configure AI agent clients
+
+---
+
+## Open Questions - User Input Required
+
+The following questions arose during implementation. Please provide answers below each question:
+
+### Q1: Neo4j MCP Server Environment Variables
+
+The current implementation assumes the Neo4j MCP server uses these environment variables:
+- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`
+- `MCP_API_KEY` for authentication
+- `MCP_TRANSPORT=streamable-http` and `MCP_PORT=8000`
+
+**Question**: Are these the correct environment variable names for the official Neo4j MCP server? If not, what are the correct names?
+
+**Your Answer**: Yes, these are correct. Updated implementation to use consistent naming.
+
+**Research Findings**: The environment variable names are slightly different:
+- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` - Correct
+- `NEO4J_MCP_TRANSPORT` (not `MCP_TRANSPORT`) - Transport mode: `stdio` or `http`
+- `NEO4J_MCP_HTTP_PORT` (not `MCP_PORT`) - HTTP server port
+- `NEO4J_MCP_HTTP_HOST` - HTTP server bind address (default: `127.0.0.1`)
+
+**Additional Answer**:   Use `NEO4J_MCP_TRANSPORT=streamable-http` and `NEO4J_MCP_HTTP_HOST` and `NEO4J_MCP_HTTP_PORT=8000` for correct configuration.
+
+---
+
+
+### Q2: MCP Server Health Endpoint
+
+Currently using TCP-based health probes on port 8000. If the MCP server exposes an HTTP health endpoint, we can configure more accurate health checks.
+
+**Question**: Does the Neo4j MCP server expose a health check endpoint? If so, what is the path (e.g., `/health`, `/healthz`, `/mcp/health`)?
+
+**Your Answer**: Review the Neo4j MCP server at /Users/ryanknight/projects/mcp to confirm the health endpoint path.
+
+**Research Findings**: The Neo4j MCP server does **NOT** have a dedicated health endpoint. Key findings:
+- The server **only responds to `/mcp` path** (enforced by `pathValidationMiddleware`)
+- All other paths return 404 with message: "Not Found: This server only handles requests to /mcp"
+- For health checks, MCP clients can send `initialize` requests (which don't require auth)
+- **Recommendation**: Use TCP probe on port 8000 (current implementation is correct)
+
+**Additional Answer**:  Use Recommendation: Use TCP probe on port 8000 (current implementation is correct)
+---
+
+### Q3: API Key Authentication Mechanism
+
+The implementation passes `MCP_API_KEY` as an environment variable. The proposal mentions the Container App validates the API key.
+
+**Question**: How does the Neo4j MCP server validate the API key? Does it:
+- (a) Expect it in the `Authorization: Bearer <key>` header?
+- (b) Have built-in middleware that reads `MCP_API_KEY` env var?
+- (c) Require a separate auth proxy/sidecar?
+
+**Your Answer**: The Neo4j MCP Server does not provide authentication and I do not want to use the mcp server per request authentication. Does Azure provide any built-in middleware for API key validation? Can you make some recommendations.
+
+**Research Findings**: The Neo4j MCP server uses **HTTP Basic Authentication** (not API key), with these characteristics:
+- Credentials can come from: (1) `Authorization: Basic base64(user:pass)` header, or (2) env var fallback
+- Auth is **only required for `tools/call`** method (database operations)
+- Auth is **not required for** `initialize` and `tools/list` (discovery)
+
+**Azure Authentication Options for Container Apps:**
+
+| Option | Complexity | Cost | Best For |
+|--------|------------|------|----------|
+| **A. Use Basic Auth directly** | Low | Free | Simple demo - Neo4j credentials authenticate requests |
+| **B. Nginx sidecar** | Medium | Free | API key validation + proxy to MCP with Basic Auth |
+| **C. Azure Easy Auth (Entra ID)** | Medium | Free | Enterprise SSO, Azure AD integration |
+| **D. Azure API Management** | High | ~$50/mo | Rate limiting, subscriptions, analytics |
+
+**Recommendation for Demo**:
+
+**Option B - Nginx Sidecar** provides the API key interface you want:
+1. Add an Nginx container as a sidecar in the Container App
+2. Nginx validates `x-api-key` or `Authorization: Bearer <key>` header against `MCP_API_KEY`
+3. If valid, Nginx proxies to the MCP server (localhost:8000) with Basic Auth credentials
+4. This decouples authentication from the MCP server
+
+**Alternative - Use Basic Auth directly** (simplest):
+- Skip API key entirely and use HTTP Basic Auth with Neo4j credentials
+- Clients send `Authorization: Basic base64(neo4j:password)`
+- Downside: exposes database credentials to clients
+
+See: [Host remote MCP servers in Azure Container Apps](https://techcommunity.microsoft.com/blog/appsonazureblog/host-remote-mcp-servers-in-azure-container-apps/4403550)
+
+**Additional Answer**:  Option B - Nginx Sidecar
+---
+
+### Q4: Container Image Build Source
+
+The deploy script needs to build the Docker image from the official Neo4j MCP repository.
+
+**Question**: What is the correct Dockerfile path within the Neo4j MCP repository? Is it:
+- (a) Root level `Dockerfile`?
+- (b) Subdirectory like `docker/Dockerfile`?
+- (c) A different location?
+
+**Your Answer**: The .env has a NEO4J_MCP_REPO that is used to locate it. Review the Neo4j MCP server at /Users/ryanknight/projects/mcp to confirm the Dockerfile location.
+
+**Research Findings**:
+- **Location**: Root level `Dockerfile` at `${NEO4J_MCP_REPO}/Dockerfile`
+- Multi-stage build using `golang:1.25-alpine` as builder
+- Runtime uses minimal `scratch` image (non-root, UID 65532)
+- Includes CA certificates for TLS connections to Neo4j Aura
+- Entrypoint: `/app/neo4j-mcp`
+
+**Additional Answer**: Use Research Findings: Location: Root level `Dockerfile` at `${NEO4J_MCP_REPO}/Dockerfile`
+---
+
+### Q5: Additional Environment Variables
+
+Some MCP servers require additional configuration beyond database connection.
+
+**Question**: Are there any additional environment variables needed for:
+- Logging configuration?
+- Feature flags?
+- Connection pooling settings?
+- Timeout configurations?
+
+**Your Answer**: Review the Neo4j MCP server at /Users/ryanknight/projects/mcp to verify
+
+**Research Findings - Complete Environment Variable List**:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| **Required (STDIO mode)** |||
+| `NEO4J_URI` | - | Neo4j connection URI (e.g., `bolt://localhost:7687`) |
+| `NEO4J_USERNAME` | - | Database username |
+| `NEO4J_PASSWORD` | - | Database password |
+| **Optional (Neo4j)** |||
+| `NEO4J_DATABASE` | `neo4j` | Database name |
+| `NEO4J_READ_ONLY` | `false` | Enable read-only mode |
+| `NEO4J_TELEMETRY` | `true` | Enable telemetry |
+| `NEO4J_LOG_LEVEL` | `info` | Log verbosity |
+| `NEO4J_LOG_FORMAT` | `text` | Log format: `text` or `json` |
+| `NEO4J_SCHEMA_SAMPLE_SIZE` | `100` | Nodes to sample for schema |
+| **Transport & HTTP** |||
+| `NEO4J_MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
+| `NEO4J_MCP_HTTP_HOST` | `127.0.0.1` | HTTP bind address |
+| `NEO4J_MCP_HTTP_PORT` | `443`/`80` | HTTP port (443 with TLS) |
+| `NEO4J_MCP_HTTP_ALLOWED_ORIGINS` | (empty) | CORS origins (comma-separated) |
+| `NEO4J_MCP_HTTP_TLS_ENABLED` | `false` | Enable HTTPS |
+| `NEO4J_MCP_HTTP_TLS_CERT_FILE` | - | TLS certificate path |
+| `NEO4J_MCP_HTTP_TLS_KEY_FILE` | - | TLS private key path |
+
+**HTTP Timeouts** (hardcoded in server):
+- ReadTimeout: 15s
+- WriteTimeout: 60s (for complex queries)
+- IdleTimeout: 120s
+- ReadHeaderTimeout: 5s (Slowloris protection)
+
+
+**Additional Answer**: Keep it simple for demo and just use the required variables plus `NEO4J_DATABASE` `NEO4J_READ_ONLY` `NEO4J_SCHEMA_SAMPLE_SIZE` `NEO4J_LOG_LEVEL=info` for better logging.  Set NEO4J_MCP_TRANSPORT to http.
+
+
+---
+
+### Q6: Deployment Order for First-Time Setup
+
+The current implementation has a chicken-and-egg situation: the Container App references an image that doesn't exist until it's built and pushed.
+
+**Question**: Preferred approach for first deployment:
+- (a) Deploy infrastructure first (will fail initially), then build/push image, then redeploy
+- (b) Use a conditional deployment flag to skip Container App on first run
+- (c) Build and push image before running any Bicep deployment
+
+**Recommended**: Option (c) - Build and push first, then deploy all infrastructure
+
+**Your Answer**: Option (c) - Build and push first, then deploy all infrastructure
+
+**Implementation**: The deploy script will:
+1. Deploy ACR first (minimal Bicep run)
+2. Build and push image to ACR
+3. Deploy full infrastructure including Container App
 
 ---
 

@@ -26,9 +26,9 @@ param retentionInDays int = 30
 ])
 param skuName string = 'PerGB2018'
 
-// Use latest stable API version (2025-02-01)
+// Use latest stable API version (2025-07-01)
 // Reference: https://learn.microsoft.com/en-us/azure/templates/microsoft.operationalinsights/workspaces
-resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2025-02-01' = {
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2025-07-01' = {
   name: name
   location: location
   tags: tags
