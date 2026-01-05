@@ -68,14 +68,14 @@ out/
 *.code-workspace
 .history/
 
-# Azure Bicep
+# Azure Bicep (compiled ARM templates, not source)
 *.bicep.json
-*.parameters.json
-infra/
 azuredeploy.json
 azuredeploy.parameters.json
 .azure/
-azure.parameters.json
+
+# Generated files
+MCP_ACCESS.json
 
 # Node (if applicable)
 node_modules/

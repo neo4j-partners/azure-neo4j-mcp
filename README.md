@@ -142,8 +142,7 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 | `./scripts/deploy.sh infra` | Deploy Bicep infrastructure only |
 | `./scripts/deploy.sh status` | Show deployment status and outputs |
 | `./scripts/deploy.sh test` | Run test client to validate |
-| `./scripts/deploy.sh cleanup` | Delete all Azure resources |
-| `./scripts/deploy.sh help` | Show help |
+| `./scripts/cleanup.sh` | Delete all Azure resources |
 
 ## Project Structure
 
@@ -161,7 +160,8 @@ azure-neo4j-mcp/
 │       └── container-app.bicep
 ├── scripts/
 │   ├── setup-env.sh              # Environment setup script
-│   └── deploy.sh                 # Deployment script
+│   ├── deploy.sh                 # Deployment script
+│   └── cleanup.sh                # Resource cleanup script
 ├── client/
 │   ├── test_client.py            # Test client
 │   └── requirements.txt

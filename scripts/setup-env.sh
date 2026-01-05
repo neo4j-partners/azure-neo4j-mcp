@@ -28,7 +28,24 @@ DEFAULT_RESOURCE_GROUP="neo4j-mcp-demo-rg"
 DEFAULT_LOCATION="eastus"
 DEFAULT_NEO4J_DATABASE="neo4j"
 DEFAULT_NEO4J_USERNAME="neo4j"
-DEFAULT_NEO4J_MCP_REPO="/Users/ryanknight/projects/mcp"
+
+# Try to find Neo4j MCP repo in common locations
+find_neo4j_mcp_repo() {
+    local search_paths=(
+        "$HOME/projects/mcp"
+        "$HOME/mcp"
+        "$HOME/neo4j-mcp"
+        "../mcp"
+        "../../mcp"
+    )
+    for path in "${search_paths[@]}"; do
+        if [[ -d "$path" && -f "$path/Dockerfile" ]]; then
+            echo "$path"
+            return
+        fi
+    done
+    echo ""
+}
 
 # =============================================================================
 # Helper Functions
@@ -327,18 +344,20 @@ setup_neo4j_mcp_repo() {
     if env_value_exists "NEO4J_MCP_REPO"; then
         local repo_path
         repo_path=$(get_env_value "NEO4J_MCP_REPO")
-        if [[ -d "$repo_path" ]]; then
+        if [[ -d "$repo_path" && -f "$repo_path/Dockerfile" ]]; then
             log_info "NEO4J_MCP_REPO already configured: $repo_path"
             return
         else
-            log_warn "Configured NEO4J_MCP_REPO path does not exist: $repo_path"
+            log_warn "Configured NEO4J_MCP_REPO path does not exist or missing Dockerfile: $repo_path"
         fi
     fi
 
-    # Check if default path exists
-    if [[ -d "$DEFAULT_NEO4J_MCP_REPO" ]]; then
-        set_env_value "NEO4J_MCP_REPO" "$DEFAULT_NEO4J_MCP_REPO"
-        log_success "Set NEO4J_MCP_REPO=$DEFAULT_NEO4J_MCP_REPO"
+    # Try to find the repo automatically
+    local found_repo
+    found_repo=$(find_neo4j_mcp_repo)
+    if [[ -n "$found_repo" ]]; then
+        set_env_value "NEO4J_MCP_REPO" "$found_repo"
+        log_success "Found and set NEO4J_MCP_REPO=$found_repo"
         return
     fi
 
@@ -349,7 +368,7 @@ setup_neo4j_mcp_repo() {
     fi
 
     echo ""
-    log_info "Neo4j MCP server repository not found at default location."
+    log_info "Neo4j MCP server repository not found."
     log_info "Clone from: https://github.com/neo4j/mcp"
     read -rp "Enter path to Neo4j MCP repository: " repo_path
 

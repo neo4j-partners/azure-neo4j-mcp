@@ -143,11 +143,28 @@ check_prerequisites() {
     fi
     log_success "Azure CLI authenticated"
 
+    # Set the subscription explicitly to avoid multi-subscription issues
+    if [[ -n "$AZURE_SUBSCRIPTION_ID" ]]; then
+        az account set --subscription "$AZURE_SUBSCRIPTION_ID" 2>/dev/null || {
+            log_error "Failed to set subscription: $AZURE_SUBSCRIPTION_ID"
+            exit 1
+        }
+        log_success "Azure subscription set: $AZURE_SUBSCRIPTION_ID"
+    fi
+
     # Docker (for build/push commands)
     if ! command_exists docker; then
         log_warn "Docker not installed - build/push commands will not work"
     else
         log_success "Docker installed"
+    fi
+
+    # jq (for parsing JSON outputs)
+    if ! command_exists jq; then
+        log_warn "jq not installed - status output may be limited"
+        log_warn "Install from: https://stedolan.github.io/jq/download/"
+    else
+        log_success "jq installed"
     fi
 
     # Bicep
@@ -352,7 +369,16 @@ cmd_status() {
         --output json 2>/dev/null)
 
     if [[ -n "$outputs" && "$outputs" != "null" ]]; then
-        echo "$outputs" | jq -r 'to_entries[] | "  \(.key): \(.value.value)"'
+        if command_exists jq; then
+            echo "$outputs" | jq -r 'to_entries[] | "  \(.key): \(.value.value)"'
+        else
+            # Fallback without jq - use az cli table output
+            az deployment group show \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --name "main" \
+                --query "properties.outputs" \
+                --output table 2>/dev/null || echo "$outputs"
+        fi
     else
         log_warn "No outputs available"
     fi
@@ -401,40 +427,6 @@ cmd_test() {
     python3 test_client.py
 
     log_success "Tests completed"
-}
-
-# =============================================================================
-# Cleanup
-# =============================================================================
-
-cmd_cleanup() {
-    log_step "Cleaning up Azure resources"
-
-    echo ""
-    log_warn "This will delete ALL resources in resource group: $AZURE_RESOURCE_GROUP"
-    echo ""
-
-    read -rp "Are you sure? Type 'yes' to confirm: " confirm
-    if [[ "$confirm" != "yes" ]]; then
-        log_info "Cleanup cancelled"
-        exit 0
-    fi
-
-    log_info "Deleting resource group: $AZURE_RESOURCE_GROUP"
-
-    az group delete \
-        --name "$AZURE_RESOURCE_GROUP" \
-        --yes \
-        --no-wait
-
-    log_success "Resource group deletion initiated (running in background)"
-    log_info "Use 'az group show -n $AZURE_RESOURCE_GROUP' to check status"
-
-    # Clean up local files
-    if [[ -f "$MCP_ACCESS_FILE" ]]; then
-        rm -f "$MCP_ACCESS_FILE"
-        log_info "Removed MCP_ACCESS.json"
-    fi
 }
 
 # =============================================================================
@@ -541,7 +533,6 @@ COMMANDS:
     infra       Deploy Bicep infrastructure only
     status      Show deployment status and outputs
     test        Run test client to validate deployment
-    cleanup     Delete all Azure resources
     help        Show this help message
 
 PREREQUISITES:
@@ -555,14 +546,14 @@ EXAMPLES:
     ./scripts/setup-env.sh
     ./scripts/deploy.sh
 
-    # Deploy only infrastructure (Phase 1)
+    # Deploy only infrastructure
     ./scripts/deploy.sh infra
 
     # Check deployment status
     ./scripts/deploy.sh status
 
-    # Clean up all resources
-    ./scripts/deploy.sh cleanup
+    # Clean up resources
+    ./scripts/cleanup.sh
 
 EOF
 }
@@ -599,9 +590,6 @@ main() {
             ;;
         test)
             cmd_test
-            ;;
-        cleanup)
-            cmd_cleanup
             ;;
         help|--help|-h)
             cmd_help
