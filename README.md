@@ -74,26 +74,22 @@ cd azure-neo4j-mcp
 
 ### 2. Configure Environment
 
+**Option A: Automatic setup (recommended)**
+
 ```bash
-cp .env.sample .env
+./scripts/setup-env.sh
 ```
 
-Edit `.env` with your values:
+This script will:
+- Detect your Azure subscription from `az` CLI
+- Set default resource group and location
+- Prompt for Neo4j connection details
+- Generate a secure random API key
+
+**Option B: Manual setup**
 
 ```bash
-# Azure Configuration
-AZURE_SUBSCRIPTION_ID=your-subscription-id
-AZURE_RESOURCE_GROUP=neo4j-mcp-demo-rg
-AZURE_LOCATION=eastus
-
-# Neo4j Database
-NEO4J_URI=neo4j+s://xxx.databases.neo4j.io
-NEO4J_DATABASE=neo4j
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=your-neo4j-password
-
-# API Key (generate a secure random string, min 32 chars)
-MCP_API_KEY=your-secure-api-key-minimum-32-characters
+cp .env.sample .env
 ```
 
 ### 3. Deploy
@@ -139,14 +135,15 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 
 | Command | Description |
 |---------|-------------|
-| `./deploy.sh` | Full deployment (build, push, infrastructure) |
-| `./deploy.sh build` | Build Docker image locally |
-| `./deploy.sh push` | Push image to ACR |
-| `./deploy.sh infra` | Deploy Bicep infrastructure only |
-| `./deploy.sh status` | Show deployment status and outputs |
-| `./deploy.sh test` | Run test client to validate |
-| `./deploy.sh cleanup` | Delete all Azure resources |
-| `./deploy.sh help` | Show help |
+| `./scripts/setup-env.sh` | Configure .env file from Azure CLI context |
+| `./scripts/deploy.sh` | Full deployment (build, push, infrastructure) |
+| `./scripts/deploy.sh build` | Build Docker image locally |
+| `./scripts/deploy.sh push` | Push image to ACR |
+| `./scripts/deploy.sh infra` | Deploy Bicep infrastructure only |
+| `./scripts/deploy.sh status` | Show deployment status and outputs |
+| `./scripts/deploy.sh test` | Run test client to validate |
+| `./scripts/deploy.sh cleanup` | Delete all Azure resources |
+| `./scripts/deploy.sh help` | Show help |
 
 ## Project Structure
 
@@ -163,6 +160,7 @@ azure-neo4j-mcp/
 │       ├── container-environment.bicep
 │       └── container-app.bicep
 ├── scripts/
+│   ├── setup-env.sh              # Environment setup script
 │   └── deploy.sh                 # Deployment script
 ├── client/
 │   ├── test_client.py            # Test client
