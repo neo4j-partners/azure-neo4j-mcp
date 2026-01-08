@@ -82,8 +82,9 @@ var managedIdentityName = '${baseName}-identity-${environment}'
 var logAnalyticsName = '${baseName}-logs-${environment}'
 var containerRegistryName = '${baseName}acr${uniqueSuffix}'  // ACR names must be alphanumeric only
 // Key Vault names: 3-24 chars, alphanumeric and hyphens only
-// Using shorter prefix to stay within limit
-var keyVaultName = 'kv${uniqueSuffix}'
+// Truncate baseName to ensure total length stays within 24 char limit
+// Formula: take(baseName, 14) + '-kv-' (4) + take(uniqueSuffix, 6) = max 24 chars
+var keyVaultName = '${take(baseName, 14)}-kv-${take(uniqueSuffix, 6)}'
 var containerEnvironmentName = '${baseName}-env-${environment}'
 var containerAppName = '${baseName}-app-${environment}'
 

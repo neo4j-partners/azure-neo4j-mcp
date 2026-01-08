@@ -5,6 +5,8 @@
 // =============================================================================
 
 @description('Name of the Container Apps Environment')
+@minLength(1)
+@maxLength(64)
 param name string
 
 @description('Azure region for the Container Apps Environment')

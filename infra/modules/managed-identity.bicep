@@ -4,7 +4,9 @@
 // to authenticate with ACR and Key Vault without storing credentials.
 // =============================================================================
 
-@description('Name of the managed identity')
+@description('Name of the user-assigned managed identity')
+@minLength(3)
+@maxLength(128)
 param name string
 
 @description('Azure region for the managed identity')

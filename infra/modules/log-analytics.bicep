@@ -5,6 +5,8 @@
 // =============================================================================
 
 @description('Name of the Log Analytics workspace')
+@minLength(4)
+@maxLength(63)
 param name string
 
 @description('Azure region for the Log Analytics workspace')

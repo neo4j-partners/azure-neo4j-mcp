@@ -6,14 +6,15 @@
 # Uses an Nginx sidecar for API key validation and proxying to the MCP server.
 #
 # Usage:
-#   ./scripts/deploy.sh              # Full deployment
-#   ./scripts/deploy.sh build        # Build Docker images only
-#   ./scripts/deploy.sh push         # Push images to ACR only
-#   ./scripts/deploy.sh infra        # Deploy infrastructure only
-#   ./scripts/deploy.sh status       # Show deployment status
-#   ./scripts/deploy.sh test         # Run test client
-#   ./scripts/deploy.sh cleanup      # Delete all resources
-#   ./scripts/deploy.sh help         # Show help
+#   ./scripts/deploy.sh                    # Full deployment
+#   ./scripts/deploy.sh redeploy           # Rebuild and redeploy containers
+#   ./scripts/deploy.sh lint               # Lint Bicep templates
+#   ./scripts/deploy.sh infra              # Deploy infrastructure only
+#   ./scripts/deploy.sh app-registration   # Deploy Entra app registration (for Neo4j Aura SSO)
+#   ./scripts/deploy.sh status             # Show deployment status
+#   ./scripts/deploy.sh test               # Run test client
+#   ./scripts/deploy.sh cleanup            # Delete all resources
+#   ./scripts/deploy.sh help               # Show help
 #
 
 set -e
@@ -27,6 +28,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INFRA_DIR="$PROJECT_ROOT/infra"
 ENV_FILE="$PROJECT_ROOT/.env"
 MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
+APP_REGISTRATION_FILE="$PROJECT_ROOT/APP_REGISTRATION.json"
 
 # Default values (can be overridden by .env)
 DEFAULT_RESOURCE_GROUP="neo4j-mcp-demo-rg"
@@ -176,6 +178,35 @@ check_prerequisites() {
 }
 
 # =============================================================================
+# Bicep Linting
+# =============================================================================
+
+lint_bicep() {
+    log_step "Linting Bicep templates"
+
+    local lint_output
+    local lint_exit_code=0
+
+    # Lint main.bicep (which includes all modules)
+    lint_output=$(az bicep lint --file "$INFRA_DIR/main.bicep" 2>&1) || lint_exit_code=$?
+
+    # Check for errors (warnings are ok)
+    if echo "$lint_output" | grep -q "Error"; then
+        log_error "Bicep linting failed:"
+        echo "$lint_output" | grep -E "(Error|Warning)" | head -20
+        exit 1
+    fi
+
+    # Show warnings but don't fail
+    if echo "$lint_output" | grep -q "Warning"; then
+        log_warn "Bicep linting warnings:"
+        echo "$lint_output" | grep "Warning" | head -10
+    else
+        log_success "Bicep templates passed linting"
+    fi
+}
+
+# =============================================================================
 # Resource Group Management
 # =============================================================================
 
@@ -195,10 +226,10 @@ ensure_resource_group() {
 }
 
 # =============================================================================
-# Docker Build
+# Docker Build (internal helper)
 # =============================================================================
 
-cmd_build() {
+do_build() {
     log_step "Building Docker images"
 
     # Check for Neo4j MCP repo
@@ -238,10 +269,10 @@ cmd_build() {
 }
 
 # =============================================================================
-# Docker Push
+# Docker Push (internal helper)
 # =============================================================================
 
-cmd_push() {
+do_push() {
     log_step "Pushing Docker images to ACR"
 
     local acr_name
@@ -272,6 +303,72 @@ cmd_push() {
 }
 
 # =============================================================================
+# Redeploy (build, push, update container app)
+# =============================================================================
+
+cmd_redeploy() {
+    log_step "Redeploying container images"
+
+    validate_neo4j_env
+
+    # Get infrastructure info
+    local acr_name
+    acr_name=$(get_acr_name)
+
+    if [[ -z "$acr_name" ]]; then
+        log_error "Cannot determine ACR name. Run full deployment first: ./scripts/deploy.sh"
+        exit 1
+    fi
+
+    local acr_server="${acr_name}.azurecr.io"
+
+    # Step 1: Build images
+    log_info "Step 1: Building container images..."
+    do_build
+
+    # Step 2: Push to ACR
+    log_info "Step 2: Pushing images to ACR..."
+    do_push
+
+    # Step 3: Update container app to use new images
+    log_info "Step 3: Updating container app..."
+
+    local app_name="${BASE_NAME:-neo4jmcp}-app-${ENVIRONMENT:-dev}"
+    local mcp_image="${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
+    local proxy_image="${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
+
+    # Check if container app exists
+    if ! az containerapp show --name "$app_name" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+        log_error "Container app '$app_name' not found. Run full deployment first: ./scripts/deploy.sh"
+        exit 1
+    fi
+
+    # Update both containers with new images
+    # This creates a new revision with the updated images
+    az containerapp update \
+        --name "$app_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --set-env-vars "DEPLOY_TIMESTAMP=$(date -u +%Y%m%d%H%M%S)" \
+        --output none
+
+    # Force a new revision by updating with a revision suffix
+    az containerapp revision copy \
+        --name "$app_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --image "$mcp_image" \
+        --container-name neo4j-mcp-server \
+        --output none 2>/dev/null || true
+
+    log_success "Container app updated"
+
+    echo ""
+    log_success "Redeploy complete!"
+    echo ""
+    log_info "Test with: ./scripts/deploy.sh test"
+    echo ""
+}
+
+# =============================================================================
 # Infrastructure Deployment
 # =============================================================================
 
@@ -279,6 +376,7 @@ deploy_foundation() {
     log_step "Deploying foundation infrastructure (ACR, Key Vault, etc.)"
 
     validate_neo4j_env
+    lint_bicep
 
     # Export environment variables for bicepparam to read
     # Use placeholder images first to create ACR
@@ -301,6 +399,7 @@ cmd_infra() {
 
     ensure_resource_group
     validate_neo4j_env
+    lint_bicep
 
     # Get ACR name
     local acr_name
@@ -334,6 +433,131 @@ cmd_infra() {
 
     # Generate access file
     generate_mcp_access
+}
+
+# =============================================================================
+# Entra App Registration Only
+# =============================================================================
+
+cmd_app_registration() {
+    log_step "Deploying Entra App Registration for Neo4j Aura SSO"
+
+    local app_name="${ENTRA_APP_NAME:-Neo4j Aura SSO}"
+
+    log_info "App display name: $app_name"
+    log_info "Subscription: $AZURE_SUBSCRIPTION_ID"
+
+    # Deploy app registration template (subscription-scoped, no resource group needed)
+    local deployment_output
+    deployment_output=$(az deployment sub create \
+        --location "${AZURE_LOCATION:-eastus}" \
+        --template-file "$INFRA_DIR/app-registration.bicep" \
+        --parameters appDisplayName="$app_name" \
+        --name "entra-app-$(date +%Y%m%d%H%M%S)" \
+        --query "properties.outputs" \
+        --output json)
+
+    log_success "App registration deployed"
+
+    # Extract outputs
+    local client_id tenant_id discovery_uri object_id
+    client_id=$(echo "$deployment_output" | jq -r '.clientId.value')
+    tenant_id=$(echo "$deployment_output" | jq -r '.tenantId.value')
+    discovery_uri=$(echo "$deployment_output" | jq -r '.discoveryUri.value')
+    object_id=$(echo "$deployment_output" | jq -r '.objectId.value')
+
+    # Configure Application ID URI for M2M (Client Credentials) authentication
+    # This enables the scope: api://{client_id}/.default
+    # Required for programmatic SSO per: https://github.com/neo4j-field/entraid-programmatic-sso
+    log_info "Configuring Application ID URI for M2M authentication..."
+    az ad app update \
+        --id "$client_id" \
+        --identifier-uris "api://${client_id}" \
+        --output none 2>/dev/null || log_warn "Could not set Application ID URI (may require additional permissions)"
+
+    log_success "Application ID URI configured: api://${client_id}"
+
+    # Build the portal URL to the specific app registration
+    local app_portal_url="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Credentials/appId/${client_id}"
+
+    # Save comprehensive JSON file for Neo4j Aura SSO setup
+    cat > "$APP_REGISTRATION_FILE" << EOF
+{
+  "_comment": "Neo4j Aura SSO Configuration - Copy these values to Aura Console",
+  "_docs": "https://neo4j.com/docs/aura/security/single-sign-on/#_microsoft_entra_id_sso",
+
+  "neo4j_aura_sso": {
+    "client_id": "$client_id",
+    "client_secret": "<PASTE_SECRET_VALUE_HERE>",
+    "discovery_uri": "$discovery_uri"
+  },
+
+  "azure_app_registration": {
+    "app_display_name": "$app_name",
+    "client_id": "$client_id",
+    "tenant_id": "$tenant_id",
+    "object_id": "$object_id",
+    "redirect_uri": "https://login.neo4j.com/login/callback",
+    "application_id_uri": "api://${client_id}"
+  },
+
+  "m2m_authentication": {
+    "scope": "api://${client_id}/.default",
+    "note": "Use this scope with acquire_token_for_client() for M2M auth"
+  },
+
+  "create_client_secret": {
+    "portal_url": "$app_portal_url",
+    "steps": [
+      "1. Click the link above (or copy to browser)",
+      "2. Click 'New client secret'",
+      "3. Add a description and select expiration",
+      "4. Click 'Add'",
+      "5. IMMEDIATELY copy the 'Value' (not 'Secret ID')",
+      "6. Paste the value into 'client_secret' above"
+    ]
+  },
+
+  "aura_console_setup": {
+    "url": "https://console.neo4j.io",
+    "steps": [
+      "1. Go to Organization > Security > Single Sign On",
+      "2. Click 'New configuration'",
+      "3. Select 'Microsoft Entra ID' as IdP Type",
+      "4. Enter Client ID, Client Secret, and Discovery URI from above",
+      "5. Choose scope: org-level login, instance-level, or both",
+      "6. Click 'Create'"
+    ]
+  }
+}
+EOF
+    log_success "SSO configuration saved to APP_REGISTRATION.json"
+
+    echo ""
+    echo "=============================================="
+    echo "Neo4j Aura SSO Configuration"
+    echo "=============================================="
+    echo ""
+    echo "Configuration saved to: APP_REGISTRATION.json"
+    echo ""
+    echo "For Neo4j Aura Console, you need:"
+    echo ""
+    echo "  Client ID:      $client_id"
+    echo "  Client Secret:  <create in Azure Portal - see below>"
+    echo "  Discovery URI:  $discovery_uri"
+    echo ""
+    echo "NEXT STEP: Create a client secret"
+    echo ""
+    echo "  Open: $app_portal_url"
+    echo ""
+    echo "  1. Click 'New client secret'"
+    echo "  2. Copy the secret VALUE (not the secret ID!)"
+    echo "  3. Paste it into APP_REGISTRATION.json under 'client_secret'"
+    echo "  4. Use the values in Neo4j Aura Console"
+    echo ""
+    echo "Aura Console: https://console.neo4j.io"
+    echo "Documentation: https://neo4j.com/docs/aura/security/single-sign-on/"
+    echo ""
 }
 
 # =============================================================================
@@ -568,11 +792,11 @@ cmd_deploy() {
 
     # Step 3: Build Docker images
     log_info "Phase 2: Building container images..."
-    cmd_build
+    do_build
 
     # Step 4: Push to ACR
     log_info "Phase 3: Pushing images to ACR..."
-    cmd_push
+    do_push
 
     # Step 5: Deploy full infrastructure with correct images
     log_info "Phase 4: Deploying container app..."
@@ -599,14 +823,15 @@ USAGE:
     ./scripts/deploy.sh [COMMAND]
 
 COMMANDS:
-    (none)      Full deployment (foundation + build + push + deploy)
-    build       Build Docker images locally (MCP server + auth proxy)
-    push        Push Docker images to ACR
-    infra       Deploy Bicep infrastructure only
-    status      Show deployment status and outputs
-    test        Run test client to validate deployment
-    cleanup     Delete all resources and clean up
-    help        Show this help message
+    (none)            Full deployment (infra + build + push + deploy)
+    redeploy          Rebuild and redeploy containers (build + push + update app)
+    lint              Lint Bicep templates (also runs automatically before deploy)
+    infra             Deploy Bicep infrastructure only
+    app-registration  Deploy Entra app registration only (for Neo4j Aura SSO)
+    status            Show deployment status and outputs
+    test              Run test client to validate deployment
+    cleanup           Delete all resources and clean up
+    help              Show this help message
 
 ARCHITECTURE:
     The deployment creates two containers in a single Container App:
@@ -622,11 +847,14 @@ PREREQUISITES:
     - Neo4j MCP repository cloned (NEO4J_MCP_REPO in .env)
 
 EXAMPLES:
-    # Full deployment
+    # Full deployment (first time)
     ./scripts/deploy.sh
 
-    # Build images only
-    ./scripts/deploy.sh build
+    # Rebuild and redeploy after code changes
+    ./scripts/deploy.sh redeploy
+
+    # Deploy Entra app registration for Neo4j Aura SSO
+    ./scripts/deploy.sh app-registration
 
     # Check deployment status
     ./scripts/deploy.sh status
@@ -636,6 +864,9 @@ EXAMPLES:
 
     # Clean up resources
     ./scripts/deploy.sh cleanup
+
+ENVIRONMENT VARIABLES:
+    ENTRA_APP_NAME    Display name for the Entra app (default: "Neo4j Aura SSO")
 
 EOF
 }
@@ -654,18 +885,24 @@ main() {
         check_prerequisites
     fi
 
+    # Skip Neo4j validation for app-registration (it doesn't need Neo4j credentials)
+    # This is handled implicitly since cmd_app_registration doesn't call validate_neo4j_env
+
     case "$command" in
         deploy|"")
             cmd_deploy
             ;;
-        build)
-            cmd_build
+        redeploy)
+            cmd_redeploy
             ;;
-        push)
-            cmd_push
+        lint)
+            lint_bicep
             ;;
         infra)
             cmd_infra
+            ;;
+        app-registration|app-reg|entra)
+            cmd_app_registration
             ;;
         status)
             cmd_status

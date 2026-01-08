@@ -18,6 +18,8 @@
 // =============================================================================
 
 @description('Name of the Container App')
+@minLength(2)
+@maxLength(32)
 param name string
 
 @description('Azure region for the Container App')

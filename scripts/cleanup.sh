@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
 MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
+APP_REGISTRATION_FILE="$PROJECT_ROOT/APP_REGISTRATION.json"
 
 # =============================================================================
 # Helper Functions
@@ -79,6 +80,13 @@ cleanup_local_files() {
     if [[ -f "$MCP_ACCESS_FILE" ]]; then
         rm -f "$MCP_ACCESS_FILE"
         log_success "Removed MCP_ACCESS.json"
+        cleaned=true
+    fi
+
+    # APP_REGISTRATION.json
+    if [[ -f "$APP_REGISTRATION_FILE" ]]; then
+        rm -f "$APP_REGISTRATION_FILE"
+        log_success "Removed APP_REGISTRATION.json"
         cleaned=true
     fi
 
@@ -147,8 +155,9 @@ cleanup_azure_resources() {
     if ! az group show --name "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
         log_info "Resource group '$AZURE_RESOURCE_GROUP' does not exist"
         log_info "Nothing to clean up in Azure"
-        # Still check for soft-deleted Key Vaults to purge
-        purge_deleted_keyvaults
+        # Can't check for soft-deleted Key Vaults without knowing the name
+        # (resource group was already deleted, so we can't query it)
+        log_info "If a Key Vault needs purging, use: az keyvault purge --name <name> --location <location>"
         return
     fi
 
@@ -214,8 +223,8 @@ cleanup_azure_resources() {
         log_success "Resource group deleted"
     fi
 
-    # Check for any soft-deleted Key Vaults to purge
-    purge_deleted_keyvaults
+    # Check if this project's Key Vault needs purging (if not already done above)
+    purge_deleted_keyvaults "$kv_name" "$kv_location"
 }
 
 purge_keyvault() {
@@ -235,45 +244,137 @@ purge_keyvault() {
 }
 
 purge_deleted_keyvaults() {
-    log_step "Checking for soft-deleted Key Vaults to purge"
+    local target_kv_name="$1"
+    local target_kv_location="$2"
 
-    # List soft-deleted Key Vaults
-    local deleted_vaults
-    deleted_vaults=$(az keyvault list-deleted \
-        --query "[?contains(name, 'kv')].{name:name, location:properties.location}" \
+    log_step "Checking for project's soft-deleted Key Vault"
+
+    # If we don't know the Key Vault name, we can't safely purge
+    if [[ -z "$target_kv_name" ]]; then
+        log_info "No Key Vault name known - skipping soft-delete check"
+        log_info "If you need to purge a specific vault, use: az keyvault purge --name <name> --location <location>"
+        return
+    fi
+
+    # Check if this specific vault is soft-deleted
+    local is_deleted
+    is_deleted=$(az keyvault list-deleted \
+        --query "[?name=='$target_kv_name'].name" \
         --output tsv 2>/dev/null || echo "")
 
-    if [[ -z "$deleted_vaults" ]]; then
-        log_info "No soft-deleted Key Vaults found"
+    if [[ -z "$is_deleted" ]]; then
+        log_info "Key Vault '$target_kv_name' is not in soft-deleted state"
         return
     fi
 
     echo ""
-    log_warn "Found soft-deleted Key Vaults:"
-    az keyvault list-deleted \
-        --query "[?contains(name, 'kv')].{Name:name, Location:properties.location}" \
-        --output table 2>/dev/null || true
-
-    echo ""
+    log_warn "Found soft-deleted Key Vault: $target_kv_name"
 
     if [[ "$FORCE" != "true" ]]; then
-        read -rp "Purge all soft-deleted Key Vaults? (y/N): " confirm
+        read -rp "Purge this Key Vault? (y/N): " confirm
         if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
             log_info "Skipping Key Vault purge"
             return
         fi
     fi
 
-    # Purge each vault
-    while IFS=$'\t' read -r name location; do
-        if [[ -n "$name" && -n "$location" ]]; then
-            log_info "Purging: $name in $location"
-            az keyvault purge --name "$name" --location "$location" 2>/dev/null || \
-                log_warn "Failed to purge $name"
-        fi
-    done <<< "$deleted_vaults"
+    # Get location if not provided
+    if [[ -z "$target_kv_location" ]]; then
+        target_kv_location=$(az keyvault list-deleted \
+            --query "[?name=='$target_kv_name'].properties.location" \
+            --output tsv 2>/dev/null || echo "")
+    fi
 
-    log_success "Soft-deleted Key Vaults purged"
+    if [[ -n "$target_kv_location" ]]; then
+        log_info "Purging: $target_kv_name in $target_kv_location"
+        if az keyvault purge --name "$target_kv_name" --location "$target_kv_location" 2>/dev/null; then
+            log_success "Key Vault '$target_kv_name' purged"
+        else
+            log_warn "Failed to purge $target_kv_name"
+        fi
+    else
+        log_warn "Could not determine location for $target_kv_name"
+    fi
+}
+
+cleanup_app_registration() {
+    log_step "Cleaning up Entra App Registration"
+
+    # Check if we have app registration info
+    if [[ ! -f "$APP_REGISTRATION_FILE" ]]; then
+        log_info "No APP_REGISTRATION.json found - skipping app registration cleanup"
+        return
+    fi
+
+    # Read app info (supports both old flat format and new nested format)
+    local client_id app_name
+    client_id=$(jq -r '.azure_app_registration.client_id // .clientId // empty' "$APP_REGISTRATION_FILE" 2>/dev/null || echo "")
+    app_name=$(jq -r '.azure_app_registration.app_display_name // .appDisplayName // empty' "$APP_REGISTRATION_FILE" 2>/dev/null || echo "")
+
+    if [[ -z "$client_id" || "$client_id" == "null" ]]; then
+        log_warn "Could not read client ID from APP_REGISTRATION.json"
+        return
+    fi
+
+    # Check if app still exists
+    if ! az ad app show --id "$client_id" >/dev/null 2>&1; then
+        log_info "App registration '$app_name' ($client_id) does not exist"
+        return
+    fi
+
+    echo ""
+    log_warn "Found App Registration:"
+    echo "  Name:      $app_name"
+    echo "  Client ID: $client_id"
+    echo ""
+
+    if [[ "$FORCE" != "true" ]]; then
+        read -rp "Delete this App Registration? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            log_info "Skipping App Registration cleanup"
+            return
+        fi
+    fi
+
+    log_info "Deleting App Registration: $app_name"
+    if az ad app delete --id "$client_id" 2>/dev/null; then
+        log_success "App Registration deleted"
+
+        # Permanently delete from recycle bin to free up uniqueName
+        purge_deleted_app_registration "$client_id" "$app_name"
+    else
+        log_warn "Failed to delete App Registration"
+    fi
+}
+
+purge_deleted_app_registration() {
+    local client_id="$1"
+    local app_name="$2"
+
+    log_info "Purging soft-deleted App Registration to free uniqueName..."
+
+    # Wait a moment for soft-delete to register
+    sleep 2
+
+    # Find the object ID in deleted items
+    local object_id
+    object_id=$(az rest --method GET \
+        --url "https://graph.microsoft.com/v1.0/directory/deletedItems/microsoft.graph.application" \
+        --query "value[?appId=='$client_id'].id" \
+        --output tsv 2>/dev/null || echo "")
+
+    if [[ -z "$object_id" ]]; then
+        log_info "App not found in recycle bin (may already be purged)"
+        return
+    fi
+
+    # Permanently delete
+    if az rest --method DELETE \
+        --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$object_id" 2>/dev/null; then
+        log_success "App Registration '$app_name' permanently purged"
+    else
+        log_warn "Could not purge App Registration (may require additional permissions)"
+    fi
 }
 
 cleanup_acr_images() {
@@ -343,6 +444,7 @@ OPTIONS:
     --force         Skip all confirmation prompts
     --no-wait       Don't wait for deletion (faster, but can't purge Key Vault)
     --local-only    Only clean local generated files (no Azure changes)
+    --app-only      Only clean Entra App Registration (keep infrastructure)
     --images-only   Only clean ACR images (keep infrastructure)
     --docker        Also clean Docker build cache
     --help          Show this help message
@@ -356,6 +458,9 @@ EXAMPLES:
 
     # Only clean local files
     ./scripts/cleanup.sh --local-only
+
+    # Only clean Entra App Registration
+    ./scripts/cleanup.sh --app-only
 
     # Clean ACR images but keep infrastructure
     ./scripts/cleanup.sh --images-only
@@ -373,14 +478,19 @@ WHAT GETS DELETED:
       - Managed Identity
       - All role assignments
 
+    Entra ID (Azure AD):
+      - App Registration (if APP_REGISTRATION.json exists)
+      - App is PURGED from recycle bin to free uniqueName immediately
+
     Key Vault Purging:
       - Key Vaults are soft-deleted by Azure by default
       - This script PURGES them (permanent deletion)
       - Allows reusing the same Key Vault name immediately
-      - Also offers to purge any previously soft-deleted Key Vaults
+      - Only purges the Key Vault from THIS project (not other Key Vaults)
 
     Local Files:
       - MCP_ACCESS.json
+      - APP_REGISTRATION.json
       - infra/main.json (if generated)
 
 EOF
@@ -395,6 +505,7 @@ main() {
     FORCE="false"
     NO_WAIT="false"
     LOCAL_ONLY="false"
+    APP_ONLY="false"
     IMAGES_ONLY="false"
     CLEAN_DOCKER="false"
 
@@ -408,6 +519,9 @@ main() {
                 ;;
             --local-only|-l)
                 LOCAL_ONLY="true"
+                ;;
+            --app-only|-a)
+                APP_ONLY="true"
                 ;;
             --images-only|-i)
                 IMAGES_ONLY="true"
@@ -439,12 +553,17 @@ main() {
     # Execute cleanup based on options
     if [[ "$LOCAL_ONLY" == "true" ]]; then
         cleanup_local_files
+    elif [[ "$APP_ONLY" == "true" ]]; then
+        cleanup_app_registration
     elif [[ "$IMAGES_ONLY" == "true" ]]; then
         cleanup_acr_images
     else
         # Full cleanup
-        cleanup_local_files
+        # Note: app registration cleanup runs first (before local files)
+        # so we can still read APP_REGISTRATION.json
+        cleanup_app_registration
         cleanup_azure_resources
+        cleanup_local_files
     fi
 
     echo ""

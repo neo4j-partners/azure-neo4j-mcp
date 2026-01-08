@@ -76,6 +76,7 @@ azuredeploy.parameters.json
 
 # Generated files
 MCP_ACCESS.json
+APP_REGISTRATION.json
 
 # Node (if applicable)
 node_modules/
