@@ -42,19 +42,20 @@ param neo4jDatabase string
 @secure()
 param mcpApiKey string
 
-// Key Vault Secrets User built-in role definition ID
-// Reference: https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#key-vault-secrets-user
-var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  '4633458b-17de-408a-b874-0445c86b69e6'
-)
+// Built-in role definitions using existing resource pattern (Microsoft recommended)
+// Reference: https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/scenarios-rbac
 
-// Key Vault Secrets Officer built-in role definition ID (allows read/write secrets)
-// Reference: https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#key-vault-secrets-officer
-var keyVaultSecretsOfficerRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
-)
+@description('Key Vault Secrets User - read secret contents')
+resource keyVaultSecretsUserRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  scope: subscription()
+  name: '4633458b-17de-408a-b874-0445c86b69e6'
+}
+
+@description('Key Vault Secrets Officer - read/write/delete secrets')
+resource keyVaultSecretsOfficerRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  scope: subscription()
+  name: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+}
 
 // Use latest stable API version (2025-05-01)
 // Reference: https://learn.microsoft.com/en-us/azure/templates/microsoft.keyvault/vaults
@@ -86,24 +87,26 @@ resource keyVault 'Microsoft.KeyVault/vaults@2025-05-01' = {
 // Grant Key Vault Secrets User role to the managed identity
 // This allows the Container App to read secrets using the managed identity
 resource secretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, identityPrincipalId, keyVaultSecretsUserRoleDefinitionId)
+  name: guid(keyVault.id, identityPrincipalId, keyVaultSecretsUserRole.id)
   scope: keyVault
   properties: {
-    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    roleDefinitionId: keyVaultSecretsUserRole.id
     principalId: identityPrincipalId
     principalType: 'ServicePrincipal'  // Required for managed identities to avoid intermittent errors
+    description: 'Allow Container App managed identity to read secrets for Neo4j MCP Server'
   }
 }
 
 // Grant Key Vault Secrets Officer role to the deploying user
 // This allows the deployer to update secrets via redeploy command
 resource secretsOfficerRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerPrincipalId)) {
-  name: guid(keyVault.id, deployerPrincipalId, keyVaultSecretsOfficerRoleDefinitionId)
+  name: guid(keyVault.id, deployerPrincipalId, keyVaultSecretsOfficerRole.id)
   scope: keyVault
   properties: {
-    roleDefinitionId: keyVaultSecretsOfficerRoleDefinitionId
+    roleDefinitionId: keyVaultSecretsOfficerRole.id
     principalId: deployerPrincipalId
     principalType: 'User'
+    description: 'Allow deployer to update secrets during redeploy operations'
   }
 }
 
