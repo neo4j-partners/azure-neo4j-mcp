@@ -40,11 +40,11 @@ def print_menu() -> str | None:
     print("Select a demo to run:\n")
     print("  -- Financial Documents Database --")
     print("  1. Semantic Search")
-    print("  2. Context Provider (Fulltext)")
+    print("  2. Context Provider (Fulltext) [NOT WORKING]")
     print("  3. Context Provider (Vector)")
     print("  4. Context Provider (Graph-Enriched)")
     print("")
-    print("  A. Run all demos")
+    print("  A. Run all demos (skips #2)")
     print("  0. Exit\n")
 
     try:
@@ -63,8 +63,9 @@ async def run_demo(choice: str) -> None:
     """Run the selected demo."""
     demos = _get_demos()
     if choice == "A":
-        # Run all demos sequentially
-        demo_list = list(demos.values())
+        # Run all demos sequentially (skip demo 2 - fulltext not working)
+        working_demos = {k: v for k, v in demos.items() if k != "2"}
+        demo_list = list(working_demos.values())
         for i, demo_func in enumerate(demo_list):
             await demo_func()
             if i < len(demo_list) - 1:
@@ -82,10 +83,10 @@ def main() -> None:
 Examples:
   uv run start-samples        Interactive menu
   uv run start-samples 1      Run demo 1 (Semantic Search)
-  uv run start-samples 2      Run demo 2 (Context Provider - Fulltext)
+  uv run start-samples 2      Run demo 2 (Context Provider - Fulltext) [NOT WORKING]
   uv run start-samples 3      Run demo 3 (Context Provider - Vector)
   uv run start-samples 4      Run demo 4 (Context Provider - Graph-Enriched)
-  uv run start-samples a      Run all demos
+  uv run start-samples a      Run all demos (skips #2)
 """,
     )
     parser.add_argument(

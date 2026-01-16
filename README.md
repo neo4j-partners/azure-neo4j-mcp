@@ -135,8 +135,8 @@ This will:
 
 See the [samples/](./samples/) directory for complete agent implementations (samples have their own Azure AI Foundry infrastructure, separate from the MCP server):
 
-- **langgraph-mcp-agent** - LangGraph ReAct agent using Azure OpenAI
-- **sample-maf-agent** - Microsoft Agent Framework with multiple search strategies
+- **langgraph-mcp-agent** - LangGraph ReAct agent that connects to the MCP server using `langchain-mcp-adapters`. Uses Azure OpenAI (GPT-4o) with Azure CLI authentication. Simple CLI interface for interactive queries.
+- **sample-maf-agent** - Microsoft Agent Framework (MAF) samples using the [`agent-framework-neo4j`](https://github.com/neo4j-partners/neo4j-maf-provider) provider and [Neo4j context provider](https://github.com/neo4j-partners/neo4j-maf-provider). Creates a persistent `api-arches-agent` in Azure AI Foundry with support for fulltext, vector, and graph-enriched search strategies.
 
 ### 6. Manual Access (Optional)
 
@@ -209,8 +209,8 @@ azure-neo4j-mcp/
 │   ├── test_client.py              # Deployment validation client
 │   └── requirements.txt            # Python dependencies (stdlib only)
 ├── samples/
-│   ├── langgraph-mcp-agent/        # LangGraph ReAct agent (Azure OpenAI)
-│   └── sample-maf-agent/           # Microsoft Agent Framework samples
+│   ├── langgraph-mcp-agent/        # LangGraph ReAct agent with langchain-mcp-adapters
+│   └── sample-maf-agent/           # MAF agent with neo4j-maf-provider (creates api-arches-agent)
 ├── .env.sample                     # Environment template
 ├── AZURE_DEPLOY_v2.md              # Detailed implementation proposal
 └── README.md                       # This file

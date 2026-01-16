@@ -87,11 +87,18 @@ A LangGraph-based ReAct agent that connects to the Neo4j MCP server using Azure 
 
 ### sample-maf-agent
 
-Sample applications using the Microsoft Agent Framework with `agent-framework-neo4j` provider.
+Sample applications using the Microsoft Agent Framework (MAF) with the [`agent-framework-neo4j`](https://github.com/neo4j-partners/neo4j-maf-provider) provider and [Neo4j context provider](https://github.com/neo4j-partners/neo4j-maf-provider). This sample creates the `api-arches-agent` in Azure AI Foundry.
+
+**How it works:**
+- Uses the `agent-framework-neo4j` provider package which extends MAF with Neo4j-powered knowledge retrieval
+- Leverages the Neo4j context provider to inject graph context into agent conversations
+- The provider implements custom `KnowledgeAgent` and `KnowledgeAgentOutput` classes that wrap Neo4j search capabilities
+- Supports multiple retrieval strategies: fulltext search, vector/semantic search, and graph-enriched search
+- The agent is registered in Azure AI Foundry as `api-arches-agent` (configurable via `AZURE_AI_AGENT_NAME` env var)
 
 **Features:**
 - Multiple search strategies (fulltext, vector, graph-enriched)
-- Azure AI Foundry integration
+- Azure AI Foundry integration with persistent agent registration
 - Financial document analysis use case
 
 **Run:**
@@ -105,7 +112,7 @@ uv run start-samples
 ```
 
 **Files:**
-- `src/samples/basic_fulltext/` - Basic fulltext search sample
+- `src/samples/basic_fulltext/` - Basic fulltext search sample (not working)
 - `src/samples/vector_search/` - Vector/semantic search sample
 - `src/samples/graph_enriched/` - Graph-enriched search sample
 - `src/samples/shared/` - Shared utilities and agent configuration
