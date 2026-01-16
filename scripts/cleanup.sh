@@ -22,7 +22,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
 MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
-APP_REGISTRATION_FILE="$PROJECT_ROOT/APP_REGISTRATION.json"
 
 # =============================================================================
 # Helper Functions
@@ -80,13 +79,6 @@ cleanup_local_files() {
     if [[ -f "$MCP_ACCESS_FILE" ]]; then
         rm -f "$MCP_ACCESS_FILE"
         log_success "Removed MCP_ACCESS.json"
-        cleaned=true
-    fi
-
-    # APP_REGISTRATION.json
-    if [[ -f "$APP_REGISTRATION_FILE" ]]; then
-        rm -f "$APP_REGISTRATION_FILE"
-        log_success "Removed APP_REGISTRATION.json"
         cleaned=true
     fi
 
@@ -297,86 +289,6 @@ purge_deleted_keyvaults() {
     fi
 }
 
-cleanup_app_registration() {
-    log_step "Cleaning up Entra App Registration"
-
-    # Check if we have app registration info
-    if [[ ! -f "$APP_REGISTRATION_FILE" ]]; then
-        log_info "No APP_REGISTRATION.json found - skipping app registration cleanup"
-        return
-    fi
-
-    # Read app info (supports both old flat format and new nested format)
-    local client_id app_name
-    client_id=$(jq -r '.azure_app_registration.client_id // .clientId // empty' "$APP_REGISTRATION_FILE" 2>/dev/null || echo "")
-    app_name=$(jq -r '.azure_app_registration.app_display_name // .appDisplayName // empty' "$APP_REGISTRATION_FILE" 2>/dev/null || echo "")
-
-    if [[ -z "$client_id" || "$client_id" == "null" ]]; then
-        log_warn "Could not read client ID from APP_REGISTRATION.json"
-        return
-    fi
-
-    # Check if app still exists
-    if ! az ad app show --id "$client_id" >/dev/null 2>&1; then
-        log_info "App registration '$app_name' ($client_id) does not exist"
-        return
-    fi
-
-    echo ""
-    log_warn "Found App Registration:"
-    echo "  Name:      $app_name"
-    echo "  Client ID: $client_id"
-    echo ""
-
-    if [[ "$FORCE" != "true" ]]; then
-        read -rp "Delete this App Registration? (y/N): " confirm
-        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-            log_info "Skipping App Registration cleanup"
-            return
-        fi
-    fi
-
-    log_info "Deleting App Registration: $app_name"
-    if az ad app delete --id "$client_id" 2>/dev/null; then
-        log_success "App Registration deleted"
-
-        # Permanently delete from recycle bin to free up uniqueName
-        purge_deleted_app_registration "$client_id" "$app_name"
-    else
-        log_warn "Failed to delete App Registration"
-    fi
-}
-
-purge_deleted_app_registration() {
-    local client_id="$1"
-    local app_name="$2"
-
-    log_info "Purging soft-deleted App Registration to free uniqueName..."
-
-    # Wait a moment for soft-delete to register
-    sleep 2
-
-    # Find the object ID in deleted items
-    local object_id
-    object_id=$(az rest --method GET \
-        --url "https://graph.microsoft.com/v1.0/directory/deletedItems/microsoft.graph.application" \
-        --query "value[?appId=='$client_id'].id" \
-        --output tsv 2>/dev/null || echo "")
-
-    if [[ -z "$object_id" ]]; then
-        log_info "App not found in recycle bin (may already be purged)"
-        return
-    fi
-
-    # Permanently delete
-    if az rest --method DELETE \
-        --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$object_id" 2>/dev/null; then
-        log_success "App Registration '$app_name' permanently purged"
-    else
-        log_warn "Could not purge App Registration (may require additional permissions)"
-    fi
-}
-
 cleanup_acr_images() {
     log_step "Cleaning up ACR images"
 
@@ -436,61 +348,49 @@ show_help() {
 Neo4j MCP Server - Azure Cleanup Script
 
 Deletes all Azure resources created by the deployment.
+Default behavior: fast cleanup (no prompts, no waiting).
 
 USAGE:
     ./scripts/cleanup.sh [OPTIONS]
 
 OPTIONS:
-    --force         Skip all confirmation prompts
-    --no-wait       Don't wait for deletion (faster, but can't purge Key Vault)
+    --interactive   Prompt for confirmation before deleting (default: no prompts)
+    --wait          Wait for deletion to complete and purge Key Vault (default: no wait)
     --local-only    Only clean local generated files (no Azure changes)
-    --app-only      Only clean Entra App Registration (keep infrastructure)
     --images-only   Only clean ACR images (keep infrastructure)
     --docker        Also clean Docker build cache
     --help          Show this help message
 
 EXAMPLES:
-    # Interactive cleanup (prompts for confirmation)
+    # Fast cleanup (default: no prompts, no waiting)
     ./scripts/cleanup.sh
 
-    # Force cleanup without prompts (waits for completion)
-    ./scripts/cleanup.sh --force
+    # Interactive cleanup with prompts
+    ./scripts/cleanup.sh --interactive
+
+    # Wait for deletion and purge Key Vault
+    ./scripts/cleanup.sh --wait
 
     # Only clean local files
     ./scripts/cleanup.sh --local-only
-
-    # Only clean Entra App Registration
-    ./scripts/cleanup.sh --app-only
-
-    # Clean ACR images but keep infrastructure
-    ./scripts/cleanup.sh --images-only
-
-    # Fast cleanup without waiting (won't purge Key Vault)
-    ./scripts/cleanup.sh --force --no-wait
 
 WHAT GETS DELETED:
     Azure Resources (in resource group):
       - Container App (if deployed)
       - Container Apps Environment
       - Azure Container Registry
-      - Key Vault (soft-deleted then PURGED - permanent deletion)
+      - Key Vault (soft-deleted, purged only with --wait)
       - Log Analytics Workspace
       - Managed Identity
       - All role assignments
 
-    Entra ID (Azure AD):
-      - App Registration (if APP_REGISTRATION.json exists)
-      - App is PURGED from recycle bin to free uniqueName immediately
-
-    Key Vault Purging:
-      - Key Vaults are soft-deleted by Azure by default
-      - This script PURGES them (permanent deletion)
-      - Allows reusing the same Key Vault name immediately
-      - Only purges the Key Vault from THIS project (not other Key Vaults)
+    Key Vault Notes:
+      - Key Vaults use random names (no conflicts on redeploy)
+      - Soft-deleted Key Vaults auto-purge after 7 days
+      - Use --wait to purge immediately
 
     Local Files:
       - MCP_ACCESS.json
-      - APP_REGISTRATION.json
       - infra/main.json (if generated)
 
 EOF
@@ -502,10 +402,10 @@ EOF
 
 main() {
     # Parse arguments
-    FORCE="false"
-    NO_WAIT="false"
+    # Defaults: force=true, no-wait=true (fast cleanup for demo)
+    FORCE="true"
+    NO_WAIT="true"
     LOCAL_ONLY="false"
-    APP_ONLY="false"
     IMAGES_ONLY="false"
     CLEAN_DOCKER="false"
 
@@ -514,16 +414,21 @@ main() {
             --force|-f)
                 FORCE="true"
                 ;;
+            --interactive|-i)
+                # Override default: prompt for confirmation
+                FORCE="false"
+                ;;
             --no-wait|-n)
                 NO_WAIT="true"
+                ;;
+            --wait|-w)
+                # Override default: wait for deletion and purge Key Vault
+                NO_WAIT="false"
                 ;;
             --local-only|-l)
                 LOCAL_ONLY="true"
                 ;;
-            --app-only|-a)
-                APP_ONLY="true"
-                ;;
-            --images-only|-i)
+            --images-only)
                 IMAGES_ONLY="true"
                 ;;
             --docker|-d)
@@ -553,15 +458,10 @@ main() {
     # Execute cleanup based on options
     if [[ "$LOCAL_ONLY" == "true" ]]; then
         cleanup_local_files
-    elif [[ "$APP_ONLY" == "true" ]]; then
-        cleanup_app_registration
     elif [[ "$IMAGES_ONLY" == "true" ]]; then
         cleanup_acr_images
     else
         # Full cleanup
-        # Note: app registration cleanup runs first (before local files)
-        # so we can still read APP_REGISTRATION.json
-        cleanup_app_registration
         cleanup_azure_resources
         cleanup_local_files
     fi

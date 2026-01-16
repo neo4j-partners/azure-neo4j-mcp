@@ -168,7 +168,6 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 | `./scripts/deploy.sh` | Full deployment (infra + build + push + deploy) |
 | `./scripts/deploy.sh redeploy` | Rebuild and redeploy containers (build + push + update app) |
 | `./scripts/deploy.sh infra` | Deploy Bicep infrastructure only |
-| `./scripts/deploy.sh app-registration` | Deploy Entra app registration (for Neo4j Aura SSO) |
 | `./scripts/deploy.sh status` | Show deployment status and outputs |
 | `./scripts/deploy.sh test` | Run test client to validate |
 
@@ -179,18 +178,9 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 | `./scripts/cleanup.sh` | Delete all resources (interactive, waits for completion) |
 | `./scripts/cleanup.sh --force` | Delete without prompts, purge Key Vault |
 | `./scripts/cleanup.sh --force --no-wait` | Fast delete without waiting (can't purge Key Vault) |
-| `./scripts/cleanup.sh --app-only` | Only delete Entra App Registration |
 | `./scripts/cleanup.sh --local-only` | Only remove local generated files |
 
-**Note:** Azure Key Vault and App Registrations use soft-delete by default. The cleanup script automatically purges them (permanent deletion) so you can reuse the same names immediately.
-
-### SSO Testing
-
-| Command | Description |
-|---------|-------------|
-| `./scripts/create-user.sh` | Create Azure AD test user, generate password, update test-sso/.env |
-| `./scripts/create-user.sh testuser` | Create user with specific name (appends tenant domain) |
-| `cd test-sso && ./setup-env.sh` | Populate test-sso/.env from APP_REGISTRATION.json |
+**Note:** Azure Key Vault uses soft-delete by default. The cleanup script automatically purges it (permanent deletion) so you can reuse the same name immediately.
 
 ## Project Structure
 
@@ -199,7 +189,6 @@ azure-neo4j-mcp/
 ├── infra/
 │   ├── main.bicep                  # Main Bicep template (orchestrates all modules)
 │   ├── main.bicepparam             # Deployment parameters
-│   ├── app-registration.bicep      # Standalone Entra app registration (for SSO)
 │   ├── bicepconfig.json            # Bicep extension config (Microsoft Graph)
 │   └── modules/
 │       ├── managed-identity.bicep  # User-assigned managed identity
@@ -207,25 +196,17 @@ azure-neo4j-mcp/
 │       ├── container-registry.bicep # Azure Container Registry
 │       ├── key-vault.bicep         # Azure Key Vault with secrets
 │       ├── container-environment.bicep # Container Apps environment
-│       ├── container-app.bicep     # Container App with sidecar
-│       └── entra-app-registration.bicep # Entra app registration module
+│       └── container-app.bicep     # Container App with sidecar
 ├── scripts/
 │   ├── nginx/
 │   │   ├── nginx.conf              # OpenResty/Lua auth proxy config
 │   │   └── Dockerfile              # Auth proxy container image
 │   ├── setup-env.sh                # Environment setup script
 │   ├── deploy.sh                   # Deployment script
-│   ├── cleanup.sh                  # Resource cleanup script
-│   └── create-user.sh              # Create Azure AD test user for SSO
+│   └── cleanup.sh                  # Resource cleanup script
 ├── client/
 │   ├── test_client.py              # Deployment validation client
 │   └── requirements.txt            # Python dependencies (stdlib only)
-├── test-sso/
-│   ├── setup-env.sh                # Setup .env from APP_REGISTRATION.json
-│   ├── test_sso.py                 # SSO authentication test script
-│   ├── debug_token.py              # JWT token inspection/debugging
-│   ├── pyproject.toml              # Python dependencies (msal, neo4j)
-│   └── .env.sample                 # SSO test configuration template
 ├── .env.sample                     # Environment template
 ├── AZURE_DEPLOY_v2.md              # Detailed implementation proposal
 └── README.md                       # This file
@@ -270,98 +251,6 @@ azure-neo4j-mcp/
 - **Key Vault**: All secrets (Neo4j credentials, API key) stored in Azure Key Vault
 - **No Hardcoded Secrets**: Secrets injected at runtime via Key Vault references
 - **No Admin Users**: Container Registry uses managed identity, not admin credentials
-
-## Neo4j Aura SSO 
-
-If you're using Neo4j Aura and want to enable Single Sign-On with Microsoft Entra ID, you can deploy just the app registration without the full infrastructure:
-
-```bash
-./scripts/deploy.sh app-registration
-```
-
-This creates an Azure Entra (formerly Azure AD) application registration configured for Neo4j Aura SSO with:
-- Redirect URI: `https://login.neo4j.com/login/callback`
-- Required scopes: `openid`, `profile`, `email`, `User.Read`
-
-### Output
-
-The command generates `APP_REGISTRATION.json` with everything needed for Neo4j Aura SSO.
-
-### Post-Deployment
-
-**Step 1: Create a client secret**
-
-1. Open the `portal_url` from `APP_REGISTRATION.json` (direct link to your app's credentials page)
-2. Click **New client secret**
-3. Copy the secret **Value** (not the secret ID) immediately - it won't be shown again
-4. Paste it into `APP_REGISTRATION.json` replacing `<PASTE_SECRET_VALUE_HERE>`
-
-**Step 2: Configure Neo4j Aura**
-
-1. Go to [Neo4j Aura Console](https://console.neo4j.io/) > Organization > Security > Single Sign On
-2. Click **New configuration** and select **Microsoft Entra ID**
-3. Copy the three values from `neo4j_aura_sso` in your JSON:
-   - **Client ID**
-   - **Client Secret** (the value you pasted)
-   - **Discovery URI**
-4. Choose scope (org-level, instance-level, or both)
-5. Click **Create**
-
-For more details, see the [Neo4j Aura SSO documentation](https://neo4j.com/docs/aura/security/single-sign-on/#_microsoft_entra_id_sso).
-
-### Testing SSO Authentication
-
-The `test-sso/` directory contains scripts to test SSO authentication against Neo4j Aura using Azure Entra ID tokens.
-
-#### Setup
-
-**Option A: Auto-populate from APP_REGISTRATION.json (recommended)**
-
-```bash
-cd test-sso
-./setup-env.sh
-```
-
-This reads Azure Entra config from `APP_REGISTRATION.json` and creates `.env`, preserving any existing Neo4j and user settings. You'll still need to add:
-- `NEO4J_URI` - Your Neo4j Aura connection string
-- `AZURE_CLIENT_SECRET` - If not already in APP_REGISTRATION.json
-- `AZURE_USERNAME` / `AZURE_PASSWORD` - Test user credentials
-
-**Option B: Manual setup**
-
-```bash
-cd test-sso
-cp .env.sample .env
-# Edit .env with your values
-```
-
-#### Running Tests
-
-```bash
-# Install dependencies
-uv sync
-
-# Try M2M first (no user required)
-uv run python test_m2m.py
-
-# If M2M fails, use user-based auth (requires test user)
-uv run python test_sso.py
-
-# Debug JWT token claims (useful for troubleshooting)
-uv run python debug_token.py
-```
-
-#### Test Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `setup-env.sh` | Populates `.env` from `APP_REGISTRATION.json`, preserving existing settings |
-| `validate_entra_m2m.py` | **Run first** - Validates Entra M2M setup independently of Neo4j |
-| `test_m2m.py` | M2M (Client Credentials) auth test against Neo4j Aura |
-| `test_sso.py` | User-based auth (ROPC flow), requires test user without MFA |
-| `debug_token.py` | Decodes and analyzes JWT token claims to troubleshoot SSO issues |
-
-The scripts use [MSAL (Microsoft Authentication Library)](https://github.com/AzureAD/microsoft-authentication-library-for-python) for Azure Entra authentication and the [Neo4j Python driver](https://neo4j.com/docs/python-manual/current/) for database connectivity.
 
 ## Documentation
 

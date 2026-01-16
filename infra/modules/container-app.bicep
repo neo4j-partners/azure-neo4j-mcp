@@ -182,18 +182,13 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
             memory: '1Gi'
           }
           env: [
-            // Neo4j connection (from Key Vault)
+            // Neo4j connection URI (from Key Vault)
+            // Note: Username/password are NOT passed here so MCP server skips startup
+            // verification in HTTP mode. Credentials come from per-request Basic Auth
+            // headers injected by the nginx proxy.
             {
               name: 'NEO4J_URI'
               secretRef: 'neo4j-uri'
-            }
-            {
-              name: 'NEO4J_USERNAME'
-              secretRef: 'neo4j-username'
-            }
-            {
-              name: 'NEO4J_PASSWORD'
-              secretRef: 'neo4j-password'
             }
             {
               name: 'NEO4J_DATABASE'

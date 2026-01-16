@@ -77,14 +77,17 @@ param authProxyImage string = ''
 // Generate unique suffix based on resource group ID for globally unique names
 var uniqueSuffix = uniqueString(resourceGroup().id)
 
+// Deployment timestamp for resources that need unique names on each deployment
+param deploymentTimestamp string = utcNow('yyyyMMddHHmmss')
+
 // Resource names
 var managedIdentityName = '${baseName}-identity-${environment}'
 var logAnalyticsName = '${baseName}-logs-${environment}'
 var containerRegistryName = '${baseName}acr${uniqueSuffix}'  // ACR names must be alphanumeric only
 // Key Vault names: 3-24 chars, alphanumeric and hyphens only
-// Truncate baseName to ensure total length stays within 24 char limit
-// Formula: take(baseName, 14) + '-kv-' (4) + take(uniqueSuffix, 6) = max 24 chars
-var keyVaultName = '${take(baseName, 14)}-kv-${take(uniqueSuffix, 6)}'
+// Use timestamp to generate unique name each deployment (avoids soft-delete conflicts)
+// Formula: 'kv-' (3) + take(uniqueSuffix, 6) + '-' (1) + take(timestamp, 10) = 20 chars max
+var keyVaultName = 'kv-${take(uniqueSuffix, 6)}-${take(deploymentTimestamp, 10)}'
 var containerEnvironmentName = '${baseName}-env-${environment}'
 var containerAppName = '${baseName}-app-${environment}'
 
