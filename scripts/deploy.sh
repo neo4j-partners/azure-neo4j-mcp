@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./scripts/deploy.sh                    # Full deployment
-#   ./scripts/deploy.sh redeploy           # Rebuild and redeploy containers
+#   ./scripts/deploy.sh redeploy           # Rebuild containers, update credentials, and redeploy
 #   ./scripts/deploy.sh lint               # Lint Bicep templates
 #   ./scripts/deploy.sh infra              # Deploy infrastructure only
 #   ./scripts/deploy.sh status             # Show deployment status
@@ -328,8 +328,12 @@ cmd_redeploy() {
     log_info "Step 2: Pushing images to ACR..."
     do_push
 
-    # Step 3: Update container app to use new images
-    log_info "Step 3: Updating container app..."
+    # Step 3: Update Key Vault secrets
+    log_info "Step 3: Updating credentials in Key Vault..."
+    update_keyvault_secrets
+
+    # Step 4: Update container app to use new images
+    log_info "Step 4: Updating container app..."
 
     local app_name="${BASE_NAME:-neo4jmcp}-app-${ENVIRONMENT:-dev}"
     local mcp_image="${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
@@ -341,23 +345,26 @@ cmd_redeploy() {
         exit 1
     fi
 
-    # Update both containers with new images
-    # This creates a new revision with the updated images
+    # Update the MCP server container with the new image
     az containerapp update \
         --name "$app_name" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
-        --set-env-vars "DEPLOY_TIMESTAMP=$(date -u +%Y%m%d%H%M%S)" \
+        --container-name neo4j-mcp-server \
+        --image "$mcp_image" \
         --output none
 
-    # Force a new revision by updating with a revision suffix
-    az containerapp revision copy \
+    # Update the auth proxy container with the new image
+    az containerapp update \
         --name "$app_name" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
-        --image "$mcp_image" \
-        --container-name neo4j-mcp-server \
-        --output none 2>/dev/null || true
+        --container-name mcp-auth-proxy \
+        --image "$proxy_image" \
+        --output none
 
     log_success "Container app updated"
+
+    # Generate access file
+    generate_mcp_access
 
     echo ""
     log_success "Redeploy complete!"
@@ -380,6 +387,11 @@ deploy_foundation() {
     # Use placeholder images first to create ACR
     export MCP_SERVER_IMAGE="mcr.microsoft.com/hello-world:latest"
     export AUTH_PROXY_IMAGE="mcr.microsoft.com/hello-world:latest"
+
+    # Get deployer's principal ID for Key Vault write access
+    export DEPLOYER_PRINCIPAL_ID
+    DEPLOYER_PRINCIPAL_ID=$(get_deployer_principal_id)
+    log_info "Deployer principal ID: $DEPLOYER_PRINCIPAL_ID"
 
     # Deploy with placeholder images first to create ACR
     az deployment group create \
@@ -415,10 +427,15 @@ cmd_infra() {
         log_warn "ACR not found - using placeholder images"
     fi
 
+    # Get deployer's principal ID for Key Vault write access
+    export DEPLOYER_PRINCIPAL_ID
+    DEPLOYER_PRINCIPAL_ID=$(get_deployer_principal_id)
+
     log_info "Deploying to resource group: $AZURE_RESOURCE_GROUP"
     log_info "Location: $AZURE_LOCATION"
     log_info "MCP Server image: $MCP_SERVER_IMAGE"
     log_info "Auth proxy image: $AUTH_PROXY_IMAGE"
+    log_info "Deployer principal ID: $DEPLOYER_PRINCIPAL_ID"
 
     # Deploy Bicep template (parameters read from environment via bicepparam)
     az deployment group create \
@@ -468,6 +485,49 @@ get_acr_name() {
     fi
 
     echo "$acr_name"
+}
+
+get_keyvault_name() {
+    # First try to read from MCP_ACCESS.json
+    if [[ -f "$MCP_ACCESS_FILE" ]] && command_exists jq; then
+        local kv_name
+        kv_name=$(jq -r '.keyVaultName // empty' "$MCP_ACCESS_FILE" 2>/dev/null)
+        if [[ -n "$kv_name" ]]; then
+            echo "$kv_name"
+            return
+        fi
+    fi
+    # Fallback: query Azure
+    az keyvault list \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --query "[0].name" \
+        --output tsv 2>/dev/null || echo ""
+}
+
+get_deployer_principal_id() {
+    az ad signed-in-user show --query id -o tsv 2>/dev/null || echo ""
+}
+
+update_keyvault_secrets() {
+    log_step "Updating Key Vault secrets"
+
+    local kv_name
+    kv_name=$(get_keyvault_name)
+
+    if [[ -z "$kv_name" ]]; then
+        log_error "Key Vault not found. Run full deployment first."
+        exit 1
+    fi
+
+    log_info "Updating secrets in Key Vault: $kv_name"
+
+    az keyvault secret set --vault-name "$kv_name" --name "neo4j-uri" --value "$NEO4J_URI" --output none
+    az keyvault secret set --vault-name "$kv_name" --name "neo4j-username" --value "$NEO4J_USERNAME" --output none
+    az keyvault secret set --vault-name "$kv_name" --name "neo4j-password" --value "$NEO4J_PASSWORD" --output none
+    az keyvault secret set --vault-name "$kv_name" --name "neo4j-database" --value "$NEO4J_DATABASE" --output none
+    az keyvault secret set --vault-name "$kv_name" --name "mcp-api-key" --value "$MCP_API_KEY" --output none
+
+    log_success "Key Vault secrets updated"
 }
 
 get_container_app_url() {
@@ -570,6 +630,10 @@ generate_mcp_access() {
     local app_url
     app_url=$(get_container_app_url)
 
+    local kv_name
+    kv_name=$(az keyvault list --resource-group "$AZURE_RESOURCE_GROUP" \
+        --query "[0].name" --output tsv 2>/dev/null || echo "")
+
     if [[ -z "$app_url" ]]; then
         log_warn "Container App URL not available yet"
         return
@@ -578,6 +642,7 @@ generate_mcp_access() {
     cat > "$MCP_ACCESS_FILE" << EOF
 {
   "endpoint": "https://${app_url}",
+  "keyVaultName": "${kv_name}",
   "mcp_path": "/mcp",
   "api_key": "${MCP_API_KEY}",
   "transport": "streamable-http",
@@ -697,7 +762,7 @@ USAGE:
 
 COMMANDS:
     (none)            Full deployment (infra + build + push + deploy)
-    redeploy          Rebuild and redeploy containers (build + push + update app)
+    redeploy          Rebuild containers, update credentials, and redeploy
     lint              Lint Bicep templates (also runs automatically before deploy)
     infra             Deploy Bicep infrastructure only
     status            Show deployment status and outputs

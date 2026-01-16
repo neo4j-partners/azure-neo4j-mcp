@@ -1,0 +1,23 @@
+[project]
+name = "neo4j-provider-samples"
+version = "0.1.0"
+description = "Sample applications for agent-framework-neo4j - Financial Documents"
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-neo4j[azure]",
+    "agent-framework-azure-ai>=1.0.0b",
+    "python-dotenv",
+]
+
+[project.scripts]
+start-samples = "samples.shared.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+prerelease = "allow"

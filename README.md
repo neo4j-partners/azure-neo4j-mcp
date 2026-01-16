@@ -100,7 +100,7 @@ cd azure-neo4j-mcp
 
 ### 2. Configure Environment
 
-**Option A: Automatic setup (recommended)**
+**Automatic setup**
 
 ```bash
 ./scripts/setup-env.sh
@@ -111,12 +111,6 @@ This script will:
 - Set default resource group and location
 - Prompt for Neo4j connection details
 - Generate a secure random API key
-
-**Option B: Manual setup**
-
-```bash
-cp .env.sample .env
-```
 
 ### 3. Deploy
 
@@ -138,6 +132,13 @@ This will:
 ```
 
 ### 5. Use with AI Agents
+
+See the [samples/](./samples/) directory for complete agent implementations (samples have their own Azure AI Foundry infrastructure, separate from the MCP server):
+
+- **langgraph-mcp-agent** - LangGraph ReAct agent using Azure OpenAI
+- **sample-maf-agent** - Microsoft Agent Framework with multiple search strategies
+
+### 6. Manual Access (Optional)
 
 After deployment, `MCP_ACCESS.json` contains everything needed to connect:
 
@@ -207,6 +208,9 @@ azure-neo4j-mcp/
 ├── client/
 │   ├── test_client.py              # Deployment validation client
 │   └── requirements.txt            # Python dependencies (stdlib only)
+├── samples/
+│   ├── langgraph-mcp-agent/        # LangGraph ReAct agent (Azure OpenAI)
+│   └── sample-maf-agent/           # Microsoft Agent Framework samples
 ├── .env.sample                     # Environment template
 ├── AZURE_DEPLOY_v2.md              # Detailed implementation proposal
 └── README.md                       # This file
@@ -254,6 +258,7 @@ azure-neo4j-mcp/
 
 ## Documentation
 
+- [samples/README.md](./samples/README.md) - Sample agent implementations
 - [AZURE_DEPLOY_v2.md](./AZURE_DEPLOY_v2.md) - Detailed architecture and implementation documentation
 - [Neo4j MCP Server](https://github.com/neo4j/mcp) - Official Neo4j MCP server repository
 - [Model Context Protocol](https://modelcontextprotocol.io/) - MCP specification

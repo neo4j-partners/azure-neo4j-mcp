@@ -19,6 +19,9 @@ param tags object = {}
 @description('Principal ID of the managed identity to grant Key Vault Secrets User access')
 param identityPrincipalId string
 
+@description('Principal ID of the deploying user to grant Key Vault Secrets Officer access')
+param deployerPrincipalId string = ''
+
 @description('Neo4j database connection URI')
 @secure()
 param neo4jUri string
@@ -44,6 +47,13 @@ param mcpApiKey string
 var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '4633458b-17de-408a-b874-0445c86b69e6'
+)
+
+// Key Vault Secrets Officer built-in role definition ID (allows read/write secrets)
+// Reference: https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#key-vault-secrets-officer
+var keyVaultSecretsOfficerRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
 )
 
 // Use latest stable API version (2025-05-01)
@@ -82,6 +92,18 @@ resource secretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022
     roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
     principalId: identityPrincipalId
     principalType: 'ServicePrincipal'  // Required for managed identities to avoid intermittent errors
+  }
+}
+
+// Grant Key Vault Secrets Officer role to the deploying user
+// This allows the deployer to update secrets via redeploy command
+resource secretsOfficerRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerPrincipalId)) {
+  name: guid(keyVault.id, deployerPrincipalId, keyVaultSecretsOfficerRoleDefinitionId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: keyVaultSecretsOfficerRoleDefinitionId
+    principalId: deployerPrincipalId
+    principalType: 'User'
   }
 }
 

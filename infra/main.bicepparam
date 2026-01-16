@@ -61,3 +61,10 @@ param mcpApiKey = readEnvironmentVariable('MCP_API_KEY')
 // Container images (empty string = use ACR default in main.bicep)
 param mcpServerImage = readEnvironmentVariable('MCP_SERVER_IMAGE', '')
 param authProxyImage = readEnvironmentVariable('AUTH_PROXY_IMAGE', '')
+
+// =============================================================================
+// Deployer Access - For Key Vault write permissions during redeploy
+// =============================================================================
+
+// Principal ID of the deploying user (grants Key Vault Secrets Officer role)
+param deployerPrincipalId = readEnvironmentVariable('DEPLOYER_PRINCIPAL_ID', '')

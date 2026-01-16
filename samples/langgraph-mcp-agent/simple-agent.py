@@ -3,7 +3,7 @@
 Simple Neo4j MCP Agent
 
 A simplified ReAct agent that connects to the Neo4j MCP server.
-Uses MCP_ACCESS.json for connection info and .env for the API key.
+Uses Azure OpenAI for LLM inference and reads configuration from .env.
 
 Usage:
     python simple-agent.py                    # Run demo queries
@@ -21,13 +21,16 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain.agents import create_agent
 
 
-# File paths (relative to this script's directory)
+# File paths
 SCRIPT_DIR = Path(__file__).parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-MCP_ACCESS_FILE = PROJECT_ROOT / "MCP_ACCESS.json"
-ENV_FILE = PROJECT_ROOT / ".env"
+SAMPLES_DIR = SCRIPT_DIR.parent
+PROJECT_ROOT = SAMPLES_DIR.parent
 
-MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+# Load .env from samples directory (preferred) or project root
+SAMPLES_ENV = SAMPLES_DIR / ".env"
+PROJECT_ENV = PROJECT_ROOT / ".env"
+MCP_ACCESS_FILE = PROJECT_ROOT / "MCP_ACCESS.json"
+
 
 SYSTEM_PROMPT = """You are a helpful Neo4j database assistant with access to tools that let you query a Neo4j graph database.
 
@@ -53,61 +56,81 @@ Be concise but thorough in your responses."""
 
 DEMO_QUESTIONS = [
     ("Database Schema Overview", "What is the database schema? Give me a brief summary."),
-    ("Count of Aircraft", "How many Aircraft are in the database?"),
-    ("List Airports", "List 5 airports with their city and country."),
+    ("Count of Companies", "How many Company nodes are in the database?"),
+    ("Financial Metrics", "What financial metrics are mentioned in the SEC filings? Show a few examples."),
 ]
 
 
-def load_config() -> tuple[str, str, str]:
+def load_config() -> tuple[str, str, str, str]:
     """
-    Load configuration from MCP_ACCESS.json and .env file.
+    Load configuration from .env files and MCP_ACCESS.json.
 
     Returns:
-        tuple: (mcp_url, api_key, region)
+        tuple: (mcp_url, api_key, azure_endpoint, model_name)
     """
-    # Load .env file from project root
-    if ENV_FILE.exists():
-        load_dotenv(ENV_FILE)
+    # Load .env file - prefer samples/.env, fallback to project root
+    if SAMPLES_ENV.exists():
+        load_dotenv(SAMPLES_ENV)
+        print(f"Loaded config from: {SAMPLES_ENV}")
+    elif PROJECT_ENV.exists():
+        load_dotenv(PROJECT_ENV)
+        print(f"Loaded config from: {PROJECT_ENV}")
     else:
-        print(f"WARNING: .env file not found at {ENV_FILE}")
+        print("WARNING: No .env file found")
 
-    # Get API key from environment
+    # Get Azure AI configuration
+    azure_endpoint = os.getenv("AZURE_AI_SERVICES_ENDPOINT")
+    model_name = os.getenv("AZURE_AI_MODEL_NAME", "gpt-4o")
+
+    if not azure_endpoint:
+        print("ERROR: AZURE_AI_SERVICES_ENDPOINT not found in environment")
+        print()
+        print("Run from samples directory:")
+        print("  ./scripts/setup_azure.sh")
+        print("  azd up")
+        print("  uv run python setup_env.py")
+        sys.exit(1)
+
+    # Get MCP configuration - prefer env vars, fallback to MCP_ACCESS.json
+    mcp_endpoint = os.getenv("MCP_ENDPOINT")
     api_key = os.getenv("MCP_API_KEY")
-    if not api_key:
-        print("ERROR: MCP_API_KEY not found in environment or .env file")
-        print()
-        print("Add MCP_API_KEY to your .env file:")
-        print("  MCP_API_KEY=your-api-key-here")
-        sys.exit(1)
 
-    # Load MCP_ACCESS.json for connection info
-    if not MCP_ACCESS_FILE.exists():
-        print(f"ERROR: MCP_ACCESS.json not found at {MCP_ACCESS_FILE}")
-        print()
-        print("Run './scripts/deploy.sh' to deploy the MCP server and generate this file")
-        sys.exit(1)
+    if not mcp_endpoint or not api_key:
+        # Try loading from MCP_ACCESS.json
+        if MCP_ACCESS_FILE.exists():
+            with open(MCP_ACCESS_FILE) as f:
+                mcp_access = json.load(f)
+            endpoint = mcp_access.get("endpoint", "")
+            mcp_path = mcp_access.get("mcp_path", "/mcp")
+            mcp_endpoint = f"{endpoint.rstrip('/')}{mcp_path}"
+            api_key = mcp_access.get("api_key", api_key)
+        else:
+            print("ERROR: MCP configuration not found")
+            print()
+            print("Either set MCP_ENDPOINT and MCP_API_KEY in .env")
+            print("Or run './scripts/deploy.sh' from project root to generate MCP_ACCESS.json")
+            sys.exit(1)
 
-    with open(MCP_ACCESS_FILE) as f:
-        mcp_access = json.load(f)
-
-    # Construct the full MCP URL from endpoint + mcp_path
-    endpoint = mcp_access.get("endpoint", "")
-    mcp_path = mcp_access.get("mcp_path", "/mcp")
-    mcp_url = f"{endpoint.rstrip('/')}{mcp_path}"
-
-    # Get region (default to us-west-2 for Bedrock)
-    region = os.getenv("AWS_REGION", "us-west-2")
-
-    return mcp_url, api_key, region
+    return mcp_endpoint, api_key, azure_endpoint, model_name
 
 
-def get_llm(region: str = "us-west-2"):
-    """Get the LLM to use for the agent (AWS Bedrock Claude via Converse API)."""
-    from langchain_aws import ChatBedrockConverse
+def get_llm(azure_endpoint: str, model_name: str):
+    """Get the LLM to use for the agent (Azure OpenAI)."""
+    from azure.identity import AzureCliCredential, get_bearer_token_provider
+    from langchain_openai import AzureChatOpenAI
 
-    return ChatBedrockConverse(
-        model=MODEL_ID,
-        region_name=region,
+    # Use Azure CLI credential with token provider
+    credential = AzureCliCredential()
+    token_provider = get_bearer_token_provider(
+        credential,
+        "https://cognitiveservices.azure.com/.default"
+    )
+
+    return AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        azure_deployment=model_name,
+        api_version="2024-10-21",
+        azure_ad_token_provider=token_provider,
         temperature=0,
     )
 
@@ -120,15 +143,16 @@ async def run_agent(question: str):
     print()
 
     # Load configuration
-    mcp_url, api_key, region = load_config()
+    mcp_url, api_key, azure_endpoint, model_name = load_config()
 
     print(f"MCP Server: {mcp_url}")
+    print(f"Azure AI: {azure_endpoint}")
+    print(f"Model: {model_name}")
     print()
 
     # Initialize LLM
-    print(f"Initializing LLM (Bedrock, region: {region})...")
-    llm = get_llm(region)
-    print(f"Using: {llm.model_id}")
+    print("Initializing Azure OpenAI LLM...")
+    llm = get_llm(azure_endpoint, model_name)
     print()
 
     # Connect to MCP server
@@ -148,9 +172,7 @@ async def run_agent(question: str):
 
     # Get available tools (new API - no context manager)
     tools = await client.get_tools()
-    print(f"Loaded {len(tools)} tools:")
-    for tool in tools:
-        print(f"  - {tool.name}")
+    print(f"Loaded {len(tools)} tools: {[t.name for t in tools]}")
     print()
 
     # Create the ReAct agent

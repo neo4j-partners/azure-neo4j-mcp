@@ -70,6 +70,9 @@ param mcpServerImage string = ''
 @description('Auth proxy container image (e.g., myacr.azurecr.io/mcp-auth-proxy:latest)')
 param authProxyImage string = ''
 
+@description('Principal ID of the deploying user (for Key Vault write access during redeploy)')
+param deployerPrincipalId string = ''
+
 // =============================================================================
 // Variables
 // =============================================================================
@@ -151,6 +154,7 @@ module keyVault 'modules/key-vault.bicep' = {
     location: location
     tags: tags
     identityPrincipalId: managedIdentity.outputs.principalId
+    deployerPrincipalId: deployerPrincipalId
     neo4jUri: neo4jUri
     neo4jUsername: neo4jUsername
     neo4jPassword: neo4jPassword
