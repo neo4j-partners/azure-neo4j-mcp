@@ -23,6 +23,7 @@ def _get_demos() -> dict[str, DemoFunc]:
     """Lazy load demo functions to avoid circular imports."""
     from samples.basic_fulltext.main import demo_context_provider_basic
     from samples.graph_enriched.main import demo_context_provider_graph_enriched
+    from samples.mcp_tools.main import demo_mcp_tools
     from samples.vector_search.main import demo_context_provider_vector
     from samples.vector_search.semantic_search import demo_semantic_search
 
@@ -31,6 +32,7 @@ def _get_demos() -> dict[str, DemoFunc]:
         "2": demo_context_provider_basic,
         "3": demo_context_provider_vector,
         "4": demo_context_provider_graph_enriched,
+        "5": demo_mcp_tools,
     }
 
 
@@ -44,15 +46,18 @@ def print_menu() -> str | None:
     print("  3. Context Provider (Vector)")
     print("  4. Context Provider (Graph-Enriched)")
     print("")
+    print("  -- MCP Server Integration --")
+    print("  5. MCP Tools (Neo4j via MCP Server)")
+    print("")
     print("  A. Run all demos (skips #2)")
     print("  0. Exit\n")
 
     try:
-        choice = input("Enter your choice (0-4, A): ").strip().upper()
-        if choice in ("0", "1", "2", "3", "4", "A"):
+        choice = input("Enter your choice (0-5, A): ").strip().upper()
+        if choice in ("0", "1", "2", "3", "4", "5", "A"):
             return choice
         else:
-            print("\nInvalid choice. Please enter 0-4 or A.")
+            print("\nInvalid choice. Please enter 0-5 or A.")
             return None
     except (KeyboardInterrupt, EOFError):
         print("\n")
@@ -86,6 +91,7 @@ Examples:
   uv run start-samples 2      Run demo 2 (Context Provider - Fulltext) [NOT WORKING]
   uv run start-samples 3      Run demo 3 (Context Provider - Vector)
   uv run start-samples 4      Run demo 4 (Context Provider - Graph-Enriched)
+  uv run start-samples 5      Run demo 5 (MCP Tools - Neo4j via MCP Server)
   uv run start-samples a      Run all demos (skips #2)
 """,
     )
@@ -93,8 +99,8 @@ Examples:
         "demo",
         nargs="?",
         type=str,
-        choices=["1", "2", "3", "4", "a", "A"],
-        help="Demo to run: 1-4=Financial Documents, a=All",
+        choices=["1", "2", "3", "4", "5", "a", "A"],
+        help="Demo to run: 1-4=Financial Documents, 5=MCP Tools, a=All",
     )
     args = parser.parse_args()
 

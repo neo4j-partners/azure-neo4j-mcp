@@ -91,12 +91,21 @@ The Container App runs two containers as sidecars:
 - Azure subscription with Contributor access
 - Neo4j database (e.g., [Neo4j Aura](https://neo4j.com/cloud/aura/))
 
-### 1. Clone the Repository
+### 1. Clone the Repositories
 
 ```bash
+# Clone this deployment project
 git clone https://github.com/your-org/azure-neo4j-mcp.git
 cd azure-neo4j-mcp
+
+# Clone the forked Neo4j MCP server with HTTP streaming environment variable support
+git clone -b feat/http-env-credentials https://github.com/neo4j-partners/mcp.git ../mcp
 ```
+
+**Why the fork?** The [neo4j-partners/mcp](https://github.com/neo4j-partners/mcp) fork on the `feat/http-env-credentials` branch adds features required for Azure Container Apps deployment:
+
+- **Environment variable authentication fallback**: When running in HTTP streaming mode, the server can use `NEO4J_USERNAME` and `NEO4J_PASSWORD` environment variables as fallback credentials when Basic Auth headers are not provided. This enables the sidecar architecture where the auth proxy injects credentials.
+- **Relaxed auth for protocol methods**: MCP handshake methods (`initialize`, `tools/list`) no longer require authentication, enabling platform health checks and capability discovery without credentials.
 
 ### 2. Configure Environment
 
@@ -261,6 +270,7 @@ azure-neo4j-mcp/
 - [samples/README.md](./samples/README.md) - Sample agent implementations
 - [AZURE_DEPLOY_v2.md](./AZURE_DEPLOY_v2.md) - Detailed architecture and implementation documentation
 - [Neo4j MCP Server](https://github.com/neo4j/mcp) - Official Neo4j MCP server repository
+- [Neo4j Partners MCP Fork](https://github.com/neo4j-partners/mcp/tree/feat/http-env-credentials) - Fork with HTTP streaming environment variable support
 - [Model Context Protocol](https://modelcontextprotocol.io/) - MCP specification
 - [Azure Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/) - Azure Container Apps documentation
 
