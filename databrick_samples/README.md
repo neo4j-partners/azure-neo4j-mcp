@@ -22,6 +22,31 @@ The `neo4j-mcp-http-connection.ipynb` notebook demonstrates how to create a Data
 
 ### Setup Steps
 
+Choose one of the following options to create the HTTP connection:
+
+#### Option 1: Manual Setup via Catalog Explorer (Recommended)
+
+Use the `MCP_ACCESS.json` file in the project root to manually configure the connection in Databricks:
+
+1. In your Databricks workspace, navigate to **Catalog** > **External Data** > **Connections**
+2. Click **Create connection**
+3. Enter a connection name (e.g., `neo4j_mcp`)
+4. Select **HTTP** as the connection type
+5. Configure authentication:
+   - **Host**: Use the `endpoint` value from `MCP_ACCESS.json`
+   - **Authentication type**: Bearer Token
+   - **Bearer Token**: Use the `api_key` value from `MCP_ACCESS.json`
+6. Configure connection details:
+   - **Base path**: Leave as `/`
+   - **Is MCP connection**: Check this box to enable MCP functionality
+7. Click **Create connection**
+
+For detailed instructions, see:
+- [Databricks HTTP Connections](https://docs.databricks.com/aws/en/query-federation/http)
+- [External MCP Servers](https://docs.databricks.com/aws/en/generative-ai/mcp/external-mcp)
+
+#### Option 2: Automated Setup via Notebook
+
 **Step 1: Configure Databricks Secrets**
 
 From your local machine (where `MCP_ACCESS.json` exists):
