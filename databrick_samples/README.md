@@ -2,12 +2,14 @@
 
 Sample notebooks for integrating Neo4j MCP Server with Databricks.
 
-## Notebooks
+## Files
 
-| Notebook | Description |
-|----------|-------------|
+| File | Description |
+|------|-------------|
 | [neo4j-mcp-http-connection.ipynb](./neo4j-mcp-http-connection.ipynb) | Setup and test an HTTP connection to query Neo4j via MCP |
-| [langgraph-mcp-tool-calling-agent.ipynb](./langgraph-mcp-tool-calling-agent.ipynb) | LangGraph agent with MCP tool calling |
+| [neo4j_mcp_agent.py](./neo4j_mcp_agent.py) | LangGraph agent that connects to Neo4j via external MCP HTTP connection |
+| [neo4j-mcp-agent-deploy.ipynb](./neo4j-mcp-agent-deploy.ipynb) | Test, evaluate, and deploy the Neo4j MCP agent |
+| [langgraph-mcp-tool-calling-agent.ipynb](./langgraph-mcp-tool-calling-agent.ipynb) | Reference: LangGraph agent with MCP tool calling (Databricks template) |
 
 ## Neo4j MCP HTTP Connection
 
@@ -130,11 +132,59 @@ spark.sql("""
 | HTTP timeout | Verify MCP server is running |
 | 401 Unauthorized | Re-run setup script to refresh API key |
 
-## LangGraph MCP Tool-Calling Agent
+## Neo4j MCP Agent
 
-The `langgraph-mcp-tool-calling-agent.ipynb` notebook demonstrates how to build a LangGraph agent that connects to MCP servers hosted on Databricks. This is useful for building AI agents that can query Neo4j as part of multi-step reasoning workflows.
+The `neo4j_mcp_agent.py` and `neo4j-mcp-agent-deploy.ipynb` files provide a complete LangGraph agent that connects to Neo4j via the external MCP HTTP connection.
 
-See the notebook for detailed instructions on:
+### Architecture
+
+```
+┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐
+│  LangGraph      │────▶│ Unity Catalog HTTP   │────▶│ Neo4j MCP Server│
+│  Agent          │     │ Connection Proxy     │     │ (Azure)         │
+│                 │     │ /api/2.0/mcp/external│     │                 │
+└─────────────────┘     └──────────────────────┘     └─────────────────┘
+```
+
+### How It Works
+
+1. The agent uses the Unity Catalog HTTP connection proxy URL: `{host}/api/2.0/mcp/external/{connection_name}`
+2. Bearer token authentication is handled by the HTTP connection (configured via secrets)
+3. The agent has access to `get-schema` and `read-cypher` MCP tools
+4. Compatible with MLflow ResponsesAgent for deployment
+
+### Usage
+
+**Step 1: Create the HTTP Connection**
+
+First, run `neo4j-mcp-http-connection.ipynb` to create the `neo4j_azure_beta_mcp` connection.
+
+**Step 2: Deploy the Agent**
+
+Import both files into your Databricks workspace, then run `neo4j-mcp-agent-deploy.ipynb`:
+
+1. **Test the agent** - Verify it can query Neo4j
+2. **Log as MLflow model** - Package for deployment
+3. **Evaluate** - Assess quality with MLflow scorers
+4. **Register to Unity Catalog** - Store for governance
+5. **Deploy** - Create a serving endpoint
+
+### Agent Configuration
+
+Edit `neo4j_mcp_agent.py` to customize:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `LLM_ENDPOINT_NAME` | Databricks LLM endpoint | `databricks-claude-3-7-sonnet` |
+| `CONNECTION_NAME` | HTTP connection name | `neo4j_azure_beta_mcp` |
+| `SECRET_SCOPE` | Secrets scope name | `mcp-neo4j-secrets` |
+| `system_prompt` | Agent instructions | Neo4j query assistant |
+
+## LangGraph MCP Tool-Calling Agent (Reference)
+
+The `langgraph-mcp-tool-calling-agent.ipynb` notebook is a Databricks reference template that demonstrates how to build a LangGraph agent that connects to MCP servers. It was used as the basis for `neo4j_mcp_agent.py`.
+
+See the notebook for details on:
 - Connecting to Databricks MCP servers
 - Building custom agent workflows
 - Deploying agents to model serving endpoints
