@@ -151,6 +151,7 @@ The following examples from the [Microsoft Agent Framework Samples](https://gith
 This pattern creates the MCP tool as a context manager and passes it to the agent when invoking `run()`. Use this for session-based or temporary tool usage:
 
 ```python
+import os
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
@@ -158,55 +159,77 @@ from httpx import AsyncClient
 
 # Create HTTP client with authentication headers
 auth_headers = {"x-api-key": "your-api-key"}
-http_client = AsyncClient(headers=auth_headers)
 
-async with (
-    AzureCliCredential() as credential,
-    MCPStreamableHTTPTool(
+async with AsyncClient(headers=auth_headers) as http_client:
+    mcp_tool = MCPStreamableHTTPTool(
         name="Neo4j MCP Server",
         url="https://your-mcp-server.azurecontainerapps.io/mcp",
         http_client=http_client,
-    ) as mcp_server,
-    ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=credential),
-        name="Neo4jAgent",
-        instructions="You are a helpful assistant that answers questions about graph data.",
-    ) as agent,
-):
-    query = "What is the database schema?"
-    result = await agent.run(query, tools=mcp_server)
-    print(f"{agent.name}: {result}")
+    )
+
+    async with (
+        AzureCliCredential() as credential,
+        mcp_tool,
+    ):
+        # Create agent client and ChatAgent
+        chat_client = AzureAIAgentClient(
+            project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+            model_deployment_name=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+            credential=credential,
+        )
+        agent = ChatAgent(
+            chat_client=chat_client,
+            name="Neo4jAgent",
+            instructions="You are a helpful assistant that answers questions about graph data.",
+        )
+
+        # Pass tool at runtime
+        query = "What is the database schema?"
+        result = await agent.run(query, tools=mcp_tool)
+        print(f"{agent.name}: {result.text}")
 ```
 
 ### Pattern 2: Define MCP Tool at Agent Creation
 
-This pattern passes the `MCPStreamableHTTPTool` directly into the `create_agent` method, making it a permanent part of the agent's definition:
+This pattern passes the `MCPStreamableHTTPTool` directly to `ChatAgent`, making it a permanent part of the agent's definition:
 
 ```python
-from agent_framework import MCPStreamableHTTPTool
+import os
+from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from httpx import AsyncClient
 
 # Create HTTP client with authentication headers
 auth_headers = {"x-api-key": "your-api-key"}
-http_client = AsyncClient(headers=auth_headers)
 
-async with (
-    AzureCliCredential() as credential,
-    AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Neo4jAgent",
-        instructions="You are a helpful assistant that can query a Neo4j database.",
-        tools=MCPStreamableHTTPTool(
-            name="Neo4j MCP Server",
-            url="https://your-mcp-server.azurecontainerapps.io/mcp",
-            http_client=http_client,
-        ),
-    ) as agent,
-):
-    query = "Show me all nodes connected to Customer entities"
-    result = await agent.run(query)
-    print(f"{agent.name}: {result}")
+async with AsyncClient(headers=auth_headers) as http_client:
+    mcp_tool = MCPStreamableHTTPTool(
+        name="Neo4j MCP Server",
+        url="https://your-mcp-server.azurecontainerapps.io/mcp",
+        http_client=http_client,
+    )
+
+    async with (
+        AzureCliCredential() as credential,
+        mcp_tool,
+    ):
+        # Create agent client and ChatAgent with tools defined at creation
+        chat_client = AzureAIAgentClient(
+            project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+            model_deployment_name=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+            credential=credential,
+        )
+        agent = ChatAgent(
+            chat_client=chat_client,
+            name="Neo4jAgent",
+            instructions="You are a helpful assistant that can query a Neo4j database.",
+            tools=mcp_tool,  # Tool defined at agent creation
+        )
+
+        query = "Show me all nodes connected to Customer entities"
+        result = await agent.run(query)
+        print(f"{agent.name}: {result.text}")
 ```
 
 ### Proposed Sample Implementation
@@ -228,7 +251,7 @@ import os
 from pathlib import Path
 
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
-from agent_framework.azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentClient
 from agent_framework.exceptions import ToolException, ToolExecutionException
 from azure.identity.aio import AzureCliCredential
 from httpx import AsyncClient
@@ -300,54 +323,67 @@ async def demo_mcp_tools() -> None:
     # Create HTTP client with API key authentication
     # MCP_ACCESS.json specifies Bearer token format for Authorization header
     auth_headers = {"Authorization": f"Bearer {mcp_config['api_key']}"}
-    http_client = AsyncClient(headers=auth_headers)
-
-    credential = AzureCliCredential()
 
     try:
-        async with (
-            MCPStreamableHTTPTool(
+        # Use grouped async context managers for proper resource cleanup
+        async with AsyncClient(headers=auth_headers) as http_client:
+            mcp_tool = MCPStreamableHTTPTool(
                 name="Neo4j MCP Server",
                 url=mcp_config["endpoint"],
                 http_client=http_client,
                 allowed_tools=["get-schema", "read-cypher"],  # Read-only for safety
-            ) as mcp_server,
-            ChatAgent(
-                chat_client=AzureAIAgentClient(async_credential=credential),
-                name=agent_config.name,
-                instructions=(
-                    "You are a helpful assistant that answers questions about data "
-                    "stored in a Neo4j graph database. You have access to tools that "
-                    "let you:\n"
-                    "- get-schema: Retrieve the database schema to understand what data exists\n"
-                    "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
-                    "Always start by getting the schema to understand the data model, "
-                    "then formulate Cypher queries to answer user questions."
-                ),
-            ) as agent,
-        ):
-            print("Connected to MCP server!\n")
+            )
 
-            # List discovered tools using the .functions property
-            print("Available tools from MCP server:")
-            for func in mcp_server.functions:
-                print(f"  - {func.name}: {func.description}")
-            print("-" * 50)
+            async with (
+                AzureCliCredential() as credential,
+                mcp_tool,
+            ):
+                print("Connected to MCP server!\n")
 
-            # Demo queries (generic - work with any Neo4j database)
-            queries = [
-                "What is the schema of this database?",
-                "How many nodes are in the database?",
-                "What are the most common relationship types?",
-            ]
-
-            for i, query in enumerate(queries, 1):
-                print(f"\n[Query {i}] User: {query}\n")
-                response = await agent.run(query, tools=mcp_server)
-                print(f"[Query {i}] Agent: {response.text}\n")
+                # List discovered tools using the .functions property
+                print("Available tools from MCP server:")
+                for func in mcp_tool.functions:
+                    print(f"  - {func.name}: {func.description}")
                 print("-" * 50)
 
-            print("\nDemo complete!")
+                # Create agent client and ChatAgent
+                chat_client = AzureAIAgentClient(
+                    project_endpoint=agent_config.project_endpoint,
+                    model_deployment_name=agent_config.model,
+                    credential=credential,
+                )
+                agent = ChatAgent(
+                    chat_client=chat_client,
+                    name=agent_config.name,
+                    instructions=(
+                        "You are a helpful assistant that answers questions about data "
+                        "stored in a Neo4j graph database. You have access to tools that "
+                        "let you:\n"
+                        "- get-schema: Retrieve the database schema to understand what data exists\n"
+                        "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
+                        "Always start by getting the schema to understand the data model, "
+                        "then formulate Cypher queries to answer user questions."
+                    ),
+                    tools=mcp_tool,
+                )
+
+                # Create thread for multi-turn conversation
+                thread = agent.get_new_thread()
+
+                # Demo queries (generic - work with any Neo4j database)
+                queries = [
+                    "What is the schema of this database?",
+                    "How many nodes are in the database?",
+                    "What are the most common relationship types?",
+                ]
+
+                for i, query in enumerate(queries, 1):
+                    print(f"\n[Query {i}] User: {query}\n")
+                    response = await agent.run(query, thread=thread)
+                    print(f"[Query {i}] Agent: {response.text}\n")
+                    print("-" * 50)
+
+                print("\nDemo complete!")
 
     except ToolException as e:
         print(f"\nConnection failed: {e}")
@@ -360,9 +396,6 @@ async def demo_mcp_tools() -> None:
         logger.error(f"Unexpected error during demo: {e}")
         print(f"\nError: {e}")
         raise
-    finally:
-        await http_client.aclose()
-        await credential.close()
 ```
 
 ## Integration Points

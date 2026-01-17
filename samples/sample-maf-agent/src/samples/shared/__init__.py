@@ -2,6 +2,8 @@
 Shared utilities for sample demos.
 """
 
+from agent_framework import ChatAgent
+
 from .agent import AgentConfig, create_agent_client
 from .env import get_env_file_path
 from .logging import configure_logging, get_logger
@@ -14,4 +16,5 @@ __all__ = [
     "get_env_file_path",
     "AgentConfig",
     "create_agent_client",
+    "ChatAgent",
 ]

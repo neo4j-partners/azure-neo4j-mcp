@@ -36,6 +36,28 @@ EOF
     fi
 }
 
+# Function to check if Azure resources are deployed
+check_deployed_resources() {
+    if [ ! -d ".azure" ] || [ ! -f ".azure/dev/.env" ]; then
+        return 1  # No state, nothing deployed
+    fi
+
+    # Source the azd environment to get resource group
+    local rg=$(grep '^AZURE_RESOURCE_GROUP=' ".azure/dev/.env" 2>/dev/null | cut -d'=' -f2 | tr -d '"')
+
+    if [ -z "$rg" ]; then
+        return 1  # No resource group in state
+    fi
+
+    # Check if resource group exists in Azure
+    if az group show --name "$rg" >/dev/null 2>&1; then
+        echo "$rg"
+        return 0  # Resources are deployed
+    fi
+
+    return 1  # Resource group doesn't exist
+}
+
 echo ""
 echo "Azure AI Foundry serverless models require one of these regions:"
 echo "  1) East US 2 (eastus2) - Recommended"
@@ -60,6 +82,23 @@ esac
 clean_env_file
 
 if [ -d ".azure" ]; then
+    deployed_rg=$(check_deployed_resources)
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "WARNING: Found deployed Azure resources in resource group '$deployed_rg'"
+        echo "Deleting .azure directory will orphan these resources."
+        echo ""
+        echo "Options:"
+        echo "  1) Run 'azd down' first to clean up deployed resources"
+        echo "  2) Continue anyway (resources will be orphaned)"
+        echo ""
+        read -p "Continue without cleanup? [y/N]: " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Aborted. Run 'azd down' first, then re-run this script."
+            exit 0
+        fi
+        echo "Proceeding with .azure directory removal..."
+    fi
     echo "Removing existing .azure directory..."
     rm -rf .azure
 fi

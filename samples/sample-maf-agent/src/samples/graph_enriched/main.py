@@ -7,8 +7,6 @@ graph traversal to enrich results with company, product, and risk factor context
 
 from __future__ import annotations
 
-import asyncio
-
 from samples.shared import print_header
 
 # Graph-enriched retrieval query
@@ -47,7 +45,7 @@ async def demo_context_provider_graph_enriched() -> None:
         Neo4jContextProvider,
         Neo4jSettings,
     )
-    from samples.shared import AgentConfig, create_agent_client, get_logger
+    from samples.shared import AgentConfig, ChatAgent, create_agent_client, get_logger
 
     logger = get_logger()
 
@@ -89,46 +87,56 @@ async def demo_context_provider_graph_enriched() -> None:
     print("  Company -[:MENTIONS]-> Product")
     print("-" * 50 + "\n")
 
-    credential = AzureCliCredential()
+    # Create sync credential for embedder (neo4j-graphrag uses sync APIs)
     sync_credential = DefaultAzureCredential()
-    embedder = None
+
+    # Create embedder for neo4j-graphrag
+    embedder = AzureAIEmbedder(
+        endpoint=azure_settings.inference_endpoint,
+        credential=sync_credential,
+        model=azure_settings.embedding_model,
+    )
+    print("Embedder initialized!\n")
+
+    # Create context provider with graph-enriched mode
+    # Uses VectorCypherRetriever internally
+    provider = Neo4jContextProvider(
+        uri=neo4j_settings.uri,
+        username=neo4j_settings.username,
+        password=neo4j_settings.get_password(),
+        index_name=neo4j_settings.vector_index_name,
+        index_type="vector",
+        retrieval_query=RETRIEVAL_QUERY,
+        embedder=embedder,
+        top_k=5,
+        context_prompt=(
+            "## Graph-Enriched Knowledge Context\n"
+            "The following information combines semantic search results with "
+            "graph traversal to provide company, product, and risk context:"
+        ),
+    )
 
     try:
-        # Create embedder for neo4j-graphrag (uses sync credential)
-        embedder = AzureAIEmbedder(
-            endpoint=azure_settings.inference_endpoint,
-            credential=sync_credential,
-            model=azure_settings.embedding_model,
-        )
-        print("Embedder initialized!\n")
-
-        # Create context provider with graph-enriched mode
-        # Uses VectorCypherRetriever internally
-        provider = Neo4jContextProvider(
-            uri=neo4j_settings.uri,
-            username=neo4j_settings.username,
-            password=neo4j_settings.get_password(),
-            index_name=neo4j_settings.vector_index_name,
-            index_type="vector",
-            retrieval_query=RETRIEVAL_QUERY,
-            embedder=embedder,
-            top_k=5,
-            context_prompt=(
-                "## Graph-Enriched Knowledge Context\n"
-                "The following information combines semantic search results with "
-                "graph traversal to provide company, product, and risk context:"
-            ),
-        )
-
-        # Create agent client
-        client = create_agent_client(agent_config, credential)
-
-        # Use both provider and agent as async context managers
-        async with provider:
+        # BEST PRACTICE: Grouped Async Context Managers
+        # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+        #
+        # Using `async with (resource1, resource2, ...):` provides several benefits:
+        # 1. Automatic cleanup: Resources are properly closed even if exceptions occur
+        # 2. No manual finally blocks: Eliminates error-prone cleanup code
+        # 3. No asyncio.sleep() workarounds: Context managers handle async cleanup timing
+        # 4. Clear resource lifetime: Easy to see which resources are in scope
+        # 5. Proper ordering: Resources are released in reverse order of acquisition
+        async with (
+            AzureCliCredential() as credential,
+            provider,
+        ):
             print("Connected to Neo4j with graph-enriched mode!\n")
 
-            async with client.create_agent(
+            # Create agent client and ChatAgent
+            chat_client = create_agent_client(agent_config, credential)
+            agent = ChatAgent(
                 name=agent_config.name,
+                chat_client=chat_client,
                 instructions=(
                     "You are a helpful assistant that answers questions about companies "
                     "using graph-enriched context. Your context includes:\n"
@@ -139,29 +147,38 @@ async def demo_context_provider_graph_enriched() -> None:
                     "When answering, cite the company, relevant products, and risks. "
                     "Be specific and reference the enriched graph data."
                 ),
-                context_provider=provider,
-            ) as agent:
-                print("Agent created with graph-enriched context provider!\n")
+                context_providers=provider,
+            )
+            print("Agent created with graph-enriched context provider!\n")
+            print("-" * 50)
+
+            # BEST PRACTICE: Thread Management for Multi-Turn Conversations
+            # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+            #
+            # Creating an explicit thread preserves conversation history, allowing
+            # the agent to remember previous queries and build coherent responses.
+            # Without a thread, each query is treated as an independent conversation.
+            thread = agent.get_new_thread()
+
+            # Demo queries that benefit from graph enrichment
+            queries = [
+                "What are Apple's main products and what risks does the company face?",
+                "Tell me about Microsoft's cloud services and business risks",
+                "What products and risks are mentioned in Amazon's filings?",
+            ]
+
+            for i, query in enumerate(queries, 1):
+                print(f"\n[Query {i}] User: {query}\n")
+
+                # Pass the thread to maintain conversation context across queries
+                response = await agent.run(query, thread=thread)
+                print(f"[Query {i}] Agent: {response.text}\n")
                 print("-" * 50)
 
-                # Demo queries that benefit from graph enrichment
-                queries = [
-                    "What are Apple's main products and what risks does the company face?",
-                    "Tell me about Microsoft's cloud services and business risks",
-                    "What products and risks are mentioned in Amazon's filings?",
-                ]
-
-                for i, query in enumerate(queries, 1):
-                    print(f"\n[Query {i}] User: {query}\n")
-
-                    response = await agent.run(query)
-                    print(f"[Query {i}] Agent: {response.text}\n")
-                    print("-" * 50)
-
-                print(
-                    "\nDemo complete! Graph-enriched mode combined vector search with "
-                    "graph traversal for comprehensive company context."
-                )
+            print(
+                "\nDemo complete! Graph-enriched mode combined vector search with "
+                "graph traversal for comprehensive company context."
+            )
 
     except ConnectionError as e:
         print(f"\nConnection Error: {e}")
@@ -171,9 +188,5 @@ async def demo_context_provider_graph_enriched() -> None:
         print(f"\nError: {e}")
         raise
     finally:
-        # Close embedder credential
-        if embedder is not None:
-            embedder.close()
-        await credential.close()
-        # Allow pending async cleanup tasks to complete
-        await asyncio.sleep(0.1)
+        # Close sync resources (embedder uses sync credential)
+        embedder.close()

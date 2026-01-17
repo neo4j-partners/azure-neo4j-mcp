@@ -17,12 +17,17 @@ The MCP server provides three tools:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from pathlib import Path
 
-from samples.shared import AgentConfig, create_agent_client, get_logger, print_header
+from samples.shared import (
+    AgentConfig,
+    ChatAgent,
+    create_agent_client,
+    get_logger,
+    print_header,
+)
 
 
 def load_mcp_config() -> dict[str, str | None]:
@@ -62,7 +67,7 @@ async def demo_mcp_tools() -> None:
     """Demo: Query Neo4j through MCP server tools.
 
     This demo uses Pattern 2 (Define MCP Tool at Agent Creation) where the
-    MCPStreamableHTTPTool is passed directly to create_agent(), making it
+    MCPStreamableHTTPTool is passed directly to ChatAgent, making it
     a permanent part of the agent's definition.
     """
     # Lazy imports to avoid circular dependencies and speed up CLI startup
@@ -108,55 +113,75 @@ async def demo_mcp_tools() -> None:
     # Reference: MCP_ACCESS.json specifies Authorization header with Bearer prefix
     # See: agent-framework/python/samples/getting_started/mcp/mcp_api_key_auth.py
     auth_headers = {"Authorization": f"Bearer {mcp_config['api_key']}"}
-    http_client = AsyncClient(headers=auth_headers)
-
-    credential = AzureCliCredential()
 
     try:
-        # Create MCP tool with authentication and tool filtering
-        # allowed_tools restricts to read-only operations for safety
-        mcp_tool = MCPStreamableHTTPTool(
-            name="Neo4j MCP Server",
-            url=mcp_config["endpoint"],
-            http_client=http_client,
-            allowed_tools=["get-schema", "read-cypher"],  # Read-only for safety
-        )
+        # BEST PRACTICE: Grouped Async Context Managers
+        # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+        #
+        # Using `async with (resource1, resource2, ...):` provides several benefits:
+        # 1. Automatic cleanup: Resources are properly closed even if exceptions occur
+        # 2. No manual finally blocks: Eliminates error-prone cleanup code
+        # 3. No asyncio.sleep() workarounds: Context managers handle async cleanup timing
+        # 4. Clear resource lifetime: Easy to see which resources are in scope
+        # 5. Proper ordering: Resources are released in reverse order of acquisition
+        #
+        # Note: AsyncClient must be opened first as MCPStreamableHTTPTool uses it.
+        # We nest the context managers to ensure proper resource ordering.
+        async with AsyncClient(headers=auth_headers) as http_client:
+            # Create MCP tool with authentication and tool filtering
+            # allowed_tools restricts to read-only operations for safety
+            mcp_tool = MCPStreamableHTTPTool(
+                name="Neo4j MCP Server",
+                url=mcp_config["endpoint"],
+                http_client=http_client,
+                allowed_tools=["get-schema", "read-cypher"],  # Read-only for safety
+            )
 
-        # Create agent client using shared utility
-        client = create_agent_client(agent_config, credential)
+            # Nested grouped context managers for credential and MCP tool
+            async with (
+                AzureCliCredential() as credential,
+                mcp_tool,
+            ):
+                print("Connected to MCP server!\n")
 
-        # Pattern 2: Define MCP Tool at Agent Creation
-        # The tool is passed to create_agent() and becomes part of the agent definition
-        async with mcp_tool:
-            print("Connected to MCP server!\n")
+                # List discovered tools using the .functions property
+                # Reference: agent-framework/_mcp.py lines 372-377
+                print("Available tools from MCP server:")
+                for func in mcp_tool.functions:
+                    desc = func.description[:60] + "..." if len(func.description) > 60 else func.description
+                    print(f"  - {func.name}: {desc}")
+                print("-" * 50)
 
-            # List discovered tools using the .functions property
-            # Reference: agent-framework/_mcp.py lines 372-377
-            print("Available tools from MCP server:")
-            for func in mcp_tool.functions:
-                desc = func.description[:60] + "..." if len(func.description) > 60 else func.description
-                print(f"  - {func.name}: {desc}")
-            print("-" * 50)
-
-            async with client.create_agent(
-                name=agent_config.name,
-                instructions=(
-                    "You are a helpful assistant that answers questions about data "
-                    "stored in a Neo4j graph database. You have access to MCP tools that "
-                    "let you:\n"
-                    "- get-schema: Retrieve the database schema to understand what data exists\n"
-                    "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
-                    "Always start by getting the schema to understand the data model, "
-                    "then formulate Cypher queries to answer user questions. "
-                    "When writing Cypher queries, use best practices:\n"
-                    "- Use parameterized queries when possible\n"
-                    "- Limit results appropriately\n"
-                    "- Use OPTIONAL MATCH for relationships that may not exist"
-                ),
-                tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
-            ) as agent:
+                # Create agent client and ChatAgent with MCP tools
+                chat_client = create_agent_client(agent_config, credential)
+                agent = ChatAgent(
+                    name=agent_config.name,
+                    chat_client=chat_client,
+                    instructions=(
+                        "You are a helpful assistant that answers questions about data "
+                        "stored in a Neo4j graph database. You have access to MCP tools that "
+                        "let you:\n"
+                        "- get-schema: Retrieve the database schema to understand what data exists\n"
+                        "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
+                        "Always start by getting the schema to understand the data model, "
+                        "then formulate Cypher queries to answer user questions. "
+                        "When writing Cypher queries, use best practices:\n"
+                        "- Use parameterized queries when possible\n"
+                        "- Limit results appropriately\n"
+                        "- Use OPTIONAL MATCH for relationships that may not exist"
+                    ),
+                    tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
+                )
                 print("\nAgent created with MCP tools!\n")
                 print("-" * 50)
+
+                # BEST PRACTICE: Thread Management for Multi-Turn Conversations
+                # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+                #
+                # Creating an explicit thread preserves conversation history, allowing
+                # the agent to remember previous queries and build coherent responses.
+                # Without a thread, each query is treated as an independent conversation.
+                thread = agent.get_new_thread()
 
                 # Demo queries that work with any Neo4j database
                 queries = [
@@ -168,7 +193,8 @@ async def demo_mcp_tools() -> None:
                 for i, query in enumerate(queries, 1):
                     print(f"\n[Query {i}] User: {query}\n")
 
-                    response = await agent.run(query)
+                    # Pass the thread to maintain conversation context across queries
+                    response = await agent.run(query, thread=thread)
                     print(f"[Query {i}] Agent: {response.text}\n")
                     print("-" * 50)
 
@@ -190,9 +216,3 @@ async def demo_mcp_tools() -> None:
         logger.error(f"Unexpected error during demo: {e}")
         print(f"\nError: {e}")
         raise
-    finally:
-        # Clean up resources
-        await http_client.aclose()
-        await credential.close()
-        # Allow pending async cleanup tasks to complete
-        await asyncio.sleep(0.1)

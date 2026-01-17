@@ -58,6 +58,8 @@ uv run python setup_env.py
 
 ### 2. Run a Sample
 
+#### LangGraph MCP Agent
+
 ```bash
 cd langgraph-mcp-agent
 uv sync
@@ -67,41 +69,7 @@ uv run python simple-agent.py
 uv run python simple-agent.py "How many nodes are in the database?"
 ```
 
-## Samples
-
-### langgraph-mcp-agent
-
-A LangGraph-based ReAct agent that connects to the Neo4j MCP server using Azure OpenAI.
-
-**Features:**
-- Uses `langchain-mcp-adapters` for MCP tool integration
-- Azure OpenAI (GPT-4o) for LLM inference with Azure CLI authentication
-- Simple CLI interface with demo queries
-
-**Files:**
-- `simple-agent.py` - Main agent implementation
-- `LANGGRAPH_BEST_PRACTICES.md` - Guide for LangGraph v1 API usage
-- `pyproject.toml` - Python dependencies
-
----
-
-### sample-maf-agent
-
-Sample applications using the Microsoft Agent Framework (MAF) with the [`agent-framework-neo4j`](https://github.com/neo4j-partners/neo4j-maf-provider) provider and [Neo4j context provider](https://github.com/neo4j-partners/neo4j-maf-provider). This sample creates the `api-arches-agent` in Azure AI Foundry.
-
-**How it works:**
-- Uses the `agent-framework-neo4j` provider package which extends MAF with Neo4j-powered knowledge retrieval
-- Leverages the Neo4j context provider to inject graph context into agent conversations
-- The provider implements custom `KnowledgeAgent` and `KnowledgeAgentOutput` classes that wrap Neo4j search capabilities
-- Supports multiple retrieval strategies: fulltext search, vector/semantic search, and graph-enriched search
-- The agent is registered in Azure AI Foundry as `api-arches-agent` (configurable via `AZURE_AI_AGENT_NAME` env var)
-
-**Features:**
-- Multiple search strategies (fulltext, vector, graph-enriched)
-- Azure AI Foundry integration with persistent agent registration
-- Financial document analysis use case
-
-**Run:**
+#### Microsoft Agent Framework (MAF) Sample
 
 ```bash
 cd sample-maf-agent
@@ -111,11 +79,35 @@ uv sync
 uv run start-samples
 ```
 
-**Files:**
-- `src/samples/basic_fulltext/` - Basic fulltext search sample (not working)
-- `src/samples/vector_search/` - Vector/semantic search sample
-- `src/samples/graph_enriched/` - Graph-enriched search sample
-- `src/samples/shared/` - Shared utilities and agent configuration
+## Overview of Samples
+
+### langgraph-mcp-agent
+
+This sample demonstrates how to build a conversational AI agent using LangGraph that can query and explore a Neo4j graph database through the MCP server.
+
+The agent uses a ReAct (Reasoning and Acting) pattern, which means it can reason about what tools to use, execute them, observe the results, and continue reasoning until it has enough information to answer your question. When you ask the agent a question about your graph data, it automatically discovers available MCP tools, selects the appropriate ones, and executes Cypher queries against your Neo4j database.
+
+The sample uses Azure OpenAI's GPT-4o model for the language model and connects to the MCP server using LangChain's MCP adapter library. Authentication is handled through the Azure CLI, so you don't need to manage API keys separately.
+
+This is a good starting point if you want to understand the basics of connecting an LLM to the Neo4j MCP server, or if you prefer using the LangChain/LangGraph ecosystem.
+
+---
+
+### sample-maf-agent
+
+This sample showcases the Microsoft Agent Framework (MAF) integration with Neo4j, demonstrating enterprise-grade agent development within the Azure AI Foundry ecosystem.
+
+The sample uses a specialized Neo4j provider package that extends MAF with graph-powered knowledge retrieval capabilities. When deployed, it registers a persistent agent in Azure AI Foundry that can be accessed through the Azure AI platform. This makes it suitable for production scenarios where you need centralized agent management and monitoring.
+
+The sample includes three different retrieval strategies to demonstrate various ways of searching graph data:
+
+- **Fulltext search** finds documents by matching keywords and phrases against indexed text content in your graph nodes.
+
+- **Vector search** uses semantic embeddings to find conceptually similar content, even when the exact words don't match. This is useful for natural language queries where meaning matters more than exact terminology.
+
+- **Graph-enriched search** combines vector similarity with graph traversal to not only find relevant nodes but also explore their relationships and connected context. This provides richer answers by leveraging the graph structure.
+
+The sample is designed around a financial document analysis use case, making it a good reference for building knowledge assistants that need to reason over interconnected business documents.
 
 ## Configuration
 
