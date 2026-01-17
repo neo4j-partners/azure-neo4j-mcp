@@ -380,18 +380,20 @@ cmd_redeploy() {
     fi
 
     # Update the MCP server container with the new image
+    # Container name must match what's defined in infra/modules/container-app.bicep
     az containerapp update \
         --name "$app_name" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
-        --container-name neo4j-mcp-server \
+        --container-name mcp-server \
         --image "$mcp_image" \
         --output none
 
     # Update the auth proxy container with the new image
+    # Container name must match what's defined in infra/modules/container-app.bicep
     az containerapp update \
         --name "$app_name" \
         --resource-group "$AZURE_RESOURCE_GROUP" \
-        --container-name mcp-auth-proxy \
+        --container-name auth-proxy \
         --image "$proxy_image" \
         --output none
 
