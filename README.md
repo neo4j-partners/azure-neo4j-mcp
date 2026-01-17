@@ -268,6 +268,8 @@ azure-neo4j-mcp/
 ## Documentation
 
 - [samples/README.md](./samples/README.md) - Sample agent implementations
+- [databrick_samples/README.md](./databrick_samples/README.md) - Databricks integration notebooks (HTTP connections, LangGraph agents)
+- [HTTP.md](./HTTP.md) - Databricks HTTP connection proposal and implementation details
 - [AZURE_DEPLOY_v2.md](./AZURE_DEPLOY_v2.md) - Detailed architecture and implementation documentation
 - [Neo4j MCP Server](https://github.com/neo4j/mcp) - Official Neo4j MCP server repository
 - [Neo4j Partners MCP Fork](https://github.com/neo4j-partners/mcp/tree/feat/http-env-credentials) - Fork with HTTP streaming environment variable support

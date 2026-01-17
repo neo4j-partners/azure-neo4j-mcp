@@ -230,15 +230,9 @@ async def demo_mcp_tools() -> None:
             chat_client = create_agent_client(agent_config, credential)
 
             try:
-                # PATTERN 2: Define MCP Tool at Agent Creation
+                # Define MCP Tool at Agent Creation
                 # The MCPStreamableHTTPTool is passed via the `tools` parameter,
                 # making it a permanent part of the agent's definition.
-                #
-                # Alternative: PATTERN 1 - Pass at runtime
-                #   agent = ChatAgent(chat_client=client, name="Agent", instructions="...")
-                #   result = await agent.run(query, tools=mcp_tool)
-                #
-                # Pattern 2 is preferred when the agent always needs the same tools.
                 agent = ChatAgent(
                     name=agent_config.name,
                     chat_client=chat_client,
@@ -255,7 +249,7 @@ async def demo_mcp_tools() -> None:
                         "- Limit results appropriately\n"
                         "- Use OPTIONAL MATCH for relationships that may not exist"
                     ),
-                    tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
+                    tools=mcp_tool,
                 )
                 print("\nAgent created with MCP tools!\n")
                 print("-" * 50)
