@@ -192,6 +192,19 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 
 **Note:** Azure Key Vault uses soft-delete by default. The cleanup script automatically purges it (permanent deletion) so you can reuse the same name immediately.
 
+### Testing
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/test-neo4j-connection.sh` | Test Neo4j connectivity using cypher-shell |
+
+### Diagnostics
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/logs.sh` | Show last 100 MCP server logs |
+| `./scripts/logs.sh <n>` | Show last n logs (e.g., `./scripts/logs.sh 50`) |
+
 ## Project Structure
 
 ```
@@ -213,7 +226,8 @@ azure-neo4j-mcp/
 │   │   └── Dockerfile              # Auth proxy container image
 │   ├── setup-env.sh                # Environment setup script
 │   ├── deploy.sh                   # Deployment script
-│   └── cleanup.sh                  # Resource cleanup script
+│   ├── cleanup.sh                  # Resource cleanup script
+│   └── logs.sh                     # View MCP server logs
 ├── client/
 │   ├── test_client.py              # Deployment validation client
 │   └── requirements.txt            # Python dependencies (stdlib only)

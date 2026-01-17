@@ -65,6 +65,23 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Get MCP server version from git commit
+get_mcp_version() {
+    if [[ -n "${NEO4J_MCP_REPO:-}" ]] && [[ -d "$NEO4J_MCP_REPO/.git" ]]; then
+        local commit_short
+        local commit_date
+        commit_short=$(git -C "$NEO4J_MCP_REPO" rev-parse --short HEAD 2>/dev/null)
+        commit_date=$(git -C "$NEO4J_MCP_REPO" log -1 --format=%cs 2>/dev/null)
+        if [[ -n "$commit_short" && -n "$commit_date" ]]; then
+            echo "${commit_date}-${commit_short}"
+        else
+            echo "unknown"
+        fi
+    else
+        echo "unknown"
+    fi
+}
+
 # Load environment variables from .env file
 load_env() {
     if [[ ! -f "$ENV_FILE" ]]; then
@@ -247,23 +264,29 @@ do_build() {
         exit 1
     fi
 
-    # Build MCP server image
+    # Get version from MCP repo git commit
+    MCP_VERSION=$(get_mcp_version)
+    log_info "MCP Server version: $MCP_VERSION"
+
+    # Build MCP server image (tag with version and latest)
     log_info "Building Neo4j MCP Server image..."
     docker buildx build \
         --platform linux/amd64 \
-        --tag neo4j-mcp-server:${IMAGE_TAG} \
+        --tag neo4j-mcp-server:${MCP_VERSION} \
+        --tag neo4j-mcp-server:latest \
         --load \
         "$NEO4J_MCP_REPO"
-    log_success "MCP Server image built: neo4j-mcp-server:${IMAGE_TAG}"
+    log_success "MCP Server image built: neo4j-mcp-server:${MCP_VERSION}"
 
-    # Build auth proxy image
+    # Build auth proxy image (use same version tag for consistency)
     log_info "Building auth proxy image..."
     docker buildx build \
         --platform linux/amd64 \
-        --tag mcp-auth-proxy:${IMAGE_TAG} \
+        --tag mcp-auth-proxy:${MCP_VERSION} \
+        --tag mcp-auth-proxy:latest \
         --load \
         "${SCRIPT_DIR}/nginx"
-    log_success "Auth proxy image built: mcp-auth-proxy:${IMAGE_TAG}"
+    log_success "Auth proxy image built: mcp-auth-proxy:${MCP_VERSION}"
 }
 
 # =============================================================================
@@ -283,21 +306,30 @@ do_push() {
 
     local acr_server="${acr_name}.azurecr.io"
 
+    # Ensure MCP_VERSION is set (should be set by do_build)
+    if [[ -z "${MCP_VERSION:-}" ]]; then
+        MCP_VERSION=$(get_mcp_version)
+    fi
+
     # Login to ACR
     log_info "Logging in to ACR: $acr_name"
     az acr login --name "$acr_name"
 
-    # Tag and push MCP server image
-    log_info "Pushing Neo4j MCP Server image..."
-    docker tag neo4j-mcp-server:${IMAGE_TAG} "${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
-    docker push "${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
-    log_success "MCP Server image pushed"
+    # Tag and push MCP server image (both versioned and latest)
+    log_info "Pushing Neo4j MCP Server image (version: $MCP_VERSION)..."
+    docker tag neo4j-mcp-server:${MCP_VERSION} "${acr_server}/neo4j-mcp-server:${MCP_VERSION}"
+    docker tag neo4j-mcp-server:${MCP_VERSION} "${acr_server}/neo4j-mcp-server:latest"
+    docker push "${acr_server}/neo4j-mcp-server:${MCP_VERSION}"
+    docker push "${acr_server}/neo4j-mcp-server:latest"
+    log_success "MCP Server image pushed: ${MCP_VERSION}"
 
-    # Tag and push auth proxy image
+    # Tag and push auth proxy image (both versioned and latest)
     log_info "Pushing auth proxy image..."
-    docker tag mcp-auth-proxy:${IMAGE_TAG} "${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
-    docker push "${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
-    log_success "Auth proxy image pushed"
+    docker tag mcp-auth-proxy:${MCP_VERSION} "${acr_server}/mcp-auth-proxy:${MCP_VERSION}"
+    docker tag mcp-auth-proxy:${MCP_VERSION} "${acr_server}/mcp-auth-proxy:latest"
+    docker push "${acr_server}/mcp-auth-proxy:${MCP_VERSION}"
+    docker push "${acr_server}/mcp-auth-proxy:latest"
+    log_success "Auth proxy image pushed: ${MCP_VERSION}"
 }
 
 # =============================================================================
@@ -320,7 +352,7 @@ cmd_redeploy() {
 
     local acr_server="${acr_name}.azurecr.io"
 
-    # Step 1: Build images
+    # Step 1: Build images (sets MCP_VERSION)
     log_info "Step 1: Building container images..."
     do_build
 
@@ -336,8 +368,10 @@ cmd_redeploy() {
     log_info "Step 4: Updating container app..."
 
     local app_name="${BASE_NAME:-neo4jmcp}-app-${ENVIRONMENT:-dev}"
-    local mcp_image="${acr_server}/neo4j-mcp-server:${IMAGE_TAG}"
-    local proxy_image="${acr_server}/mcp-auth-proxy:${IMAGE_TAG}"
+    local mcp_image="${acr_server}/neo4j-mcp-server:${MCP_VERSION}"
+    local proxy_image="${acr_server}/mcp-auth-proxy:${MCP_VERSION}"
+
+    log_info "Deploying MCP server version: $MCP_VERSION"
 
     # Check if container app exists
     if ! az containerapp show --name "$app_name" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
@@ -361,14 +395,15 @@ cmd_redeploy() {
         --image "$proxy_image" \
         --output none
 
-    log_success "Container app updated"
+    log_success "Container app updated with version: $MCP_VERSION"
 
-    # Generate access file
+    # Generate access file (includes version info)
     generate_mcp_access
 
     echo ""
     log_success "Redeploy complete!"
     echo ""
+    log_info "Deployed version: $MCP_VERSION"
     log_info "Test with: ./scripts/deploy.sh test"
     echo ""
 }
@@ -639,8 +674,20 @@ generate_mcp_access() {
         return
     fi
 
+    # Ensure MCP_VERSION is set
+    if [[ -z "${MCP_VERSION:-}" ]]; then
+        MCP_VERSION=$(get_mcp_version)
+    fi
+
+    local deployed_at
+    deployed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
     cat > "$MCP_ACCESS_FILE" << EOF
 {
+  "version": {
+    "mcp_server": "${MCP_VERSION}",
+    "deployed_at": "${deployed_at}"
+  },
   "endpoint": "https://${app_url}",
   "keyVaultName": "${kv_name}",
   "mcp_path": "/mcp",
@@ -678,6 +725,52 @@ EOF
 
     log_success "Generated MCP_ACCESS.json"
     log_info "Endpoint: https://${app_url}/mcp"
+    log_info "Version: ${MCP_VERSION}"
+}
+
+# =============================================================================
+# Version Info
+# =============================================================================
+
+cmd_version() {
+    log_step "Version Information"
+
+    # Show local MCP repo version
+    local local_version
+    local_version=$(get_mcp_version)
+    echo ""
+    echo "Local MCP repo version: $local_version"
+
+    if [[ -n "${NEO4J_MCP_REPO:-}" ]] && [[ -d "$NEO4J_MCP_REPO/.git" ]]; then
+        local commit_msg
+        commit_msg=$(git -C "$NEO4J_MCP_REPO" log -1 --format="%s" 2>/dev/null)
+        echo "  Latest commit: $commit_msg"
+    fi
+
+    # Show deployed version from MCP_ACCESS.json
+    echo ""
+    if [[ -f "$MCP_ACCESS_FILE" ]] && command_exists jq; then
+        local deployed_version
+        local deployed_at
+        deployed_version=$(jq -r '.version.mcp_server // "unknown"' "$MCP_ACCESS_FILE" 2>/dev/null)
+        deployed_at=$(jq -r '.version.deployed_at // "unknown"' "$MCP_ACCESS_FILE" 2>/dev/null)
+        echo "Deployed version: $deployed_version"
+        echo "  Deployed at: $deployed_at"
+
+        # Compare versions
+        echo ""
+        if [[ "$local_version" == "$deployed_version" ]]; then
+            log_success "Local and deployed versions match"
+        else
+            log_warn "Version mismatch: local=$local_version, deployed=$deployed_version"
+            log_info "Run './scripts/deploy.sh redeploy' to update"
+        fi
+    else
+        log_warn "MCP_ACCESS.json not found or jq not installed"
+        log_info "Run './scripts/deploy.sh' to deploy"
+    fi
+
+    echo ""
 }
 
 # =============================================================================
@@ -763,6 +856,7 @@ USAGE:
 COMMANDS:
     (none)            Full deployment (infra + build + push + deploy)
     redeploy          Rebuild containers, update credentials, and redeploy
+    version           Show local and deployed version info
     lint              Lint Bicep templates (also runs automatically before deploy)
     infra             Deploy Bicep infrastructure only
     status            Show deployment status and outputs
@@ -789,6 +883,9 @@ EXAMPLES:
 
     # Rebuild and redeploy after code changes
     ./scripts/deploy.sh redeploy
+
+    # Check version info (local vs deployed)
+    ./scripts/deploy.sh version
 
     # Check deployment status
     ./scripts/deploy.sh status
@@ -822,6 +919,9 @@ main() {
             ;;
         redeploy)
             cmd_redeploy
+            ;;
+        version)
+            cmd_version
             ;;
         lint)
             lint_bicep
