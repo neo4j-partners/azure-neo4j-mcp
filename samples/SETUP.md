@@ -16,7 +16,7 @@ After your Aura instance is running, restore the pre-built knowledge graph:
    ![](images/restore_drag.png)
 
    **Use the pre-built backup file**
-   - Drag the file `finance_data.backup` from the `data/` folder
+   - Download `finance_data.backup` from [neo4j-partners/workshop-financial-data](https://github.com/neo4j-partners/workshop-financial-data/tree/main/backup)
 
 4. Wait for the restore to complete - your instance will restart with the SEC 10-K filings knowledge graph
 
