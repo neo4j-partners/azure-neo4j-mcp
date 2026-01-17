@@ -45,7 +45,7 @@ async def demo_context_provider_graph_enriched() -> None:
         Neo4jContextProvider,
         Neo4jSettings,
     )
-    from samples.shared import AgentConfig, ChatAgent, create_agent_client, get_logger
+    from samples.shared import ChatAgent, create_agent_client, get_logger, load_agent_config
 
     logger = get_logger()
 
@@ -54,8 +54,9 @@ async def demo_context_provider_graph_enriched() -> None:
     print("combining vector search with graph traversal to provide rich context")
     print("about companies, their products, and risk factors.\n")
 
-    # Load configs
-    agent_config = AgentConfig()
+    # BEST PRACTICE: Use factory function to load config from environment
+    # Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/cli.py
+    agent_config = load_agent_config()
     neo4j_settings = Neo4jSettings()
     azure_settings = AzureAISettings()
 
@@ -134,51 +135,59 @@ async def demo_context_provider_graph_enriched() -> None:
 
             # Create agent client and ChatAgent
             chat_client = create_agent_client(agent_config, credential)
-            agent = ChatAgent(
-                name=agent_config.name,
-                chat_client=chat_client,
-                instructions=(
-                    "You are a helpful assistant that answers questions about companies "
-                    "using graph-enriched context. Your context includes:\n"
-                    "- Semantic search matches from company filings\n"
-                    "- Company names and ticker symbols\n"
-                    "- Products the company mentions\n"
-                    "- Risk factors the company faces\n\n"
-                    "When answering, cite the company, relevant products, and risks. "
-                    "Be specific and reference the enriched graph data."
-                ),
-                context_providers=provider,
-            )
-            print("Agent created with graph-enriched context provider!\n")
-            print("-" * 50)
 
-            # BEST PRACTICE: Thread Management for Multi-Turn Conversations
-            # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
-            #
-            # Creating an explicit thread preserves conversation history, allowing
-            # the agent to remember previous queries and build coherent responses.
-            # Without a thread, each query is treated as an independent conversation.
-            thread = agent.get_new_thread()
-
-            # Demo queries that benefit from graph enrichment
-            queries = [
-                "What are Apple's main products and what risks does the company face?",
-                "Tell me about Microsoft's cloud services and business risks",
-                "What products and risks are mentioned in Amazon's filings?",
-            ]
-
-            for i, query in enumerate(queries, 1):
-                print(f"\n[Query {i}] User: {query}\n")
-
-                # Pass the thread to maintain conversation context across queries
-                response = await agent.run(query, thread=thread)
-                print(f"[Query {i}] Agent: {response.text}\n")
+            try:
+                agent = ChatAgent(
+                    name=agent_config.name,
+                    chat_client=chat_client,
+                    instructions=(
+                        "You are a helpful assistant that answers questions about companies "
+                        "using graph-enriched context. Your context includes:\n"
+                        "- Semantic search matches from company filings\n"
+                        "- Company names and ticker symbols\n"
+                        "- Products the company mentions\n"
+                        "- Risk factors the company faces\n\n"
+                        "When answering, cite the company, relevant products, and risks. "
+                        "Be specific and reference the enriched graph data."
+                    ),
+                    context_providers=provider,
+                )
+                print("Agent created with graph-enriched context provider!\n")
                 print("-" * 50)
 
-            print(
-                "\nDemo complete! Graph-enriched mode combined vector search with "
-                "graph traversal for comprehensive company context."
-            )
+                # BEST PRACTICE: Thread Management for Multi-Turn Conversations
+                # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+                #
+                # Creating an explicit thread preserves conversation history, allowing
+                # the agent to remember previous queries and build coherent responses.
+                # Without a thread, each query is treated as an independent conversation.
+                thread = agent.get_new_thread()
+
+                # Demo queries that benefit from graph enrichment
+                queries = [
+                    "What are Apple's main products and what risks does the company face?",
+                    "Tell me about Microsoft's cloud services and business risks",
+                    "What products and risks are mentioned in Amazon's filings?",
+                ]
+
+                for i, query in enumerate(queries, 1):
+                    print(f"\n[Query {i}] User: {query}\n")
+
+                    # Pass the thread to maintain conversation context across queries
+                    response = await agent.run(query, thread=thread)
+                    print(f"[Query {i}] Agent: {response.text}\n")
+                    print("-" * 50)
+
+                print(
+                    "\nDemo complete! Graph-enriched mode combined vector search with "
+                    "graph traversal for comprehensive company context."
+                )
+
+            finally:
+                # IMPORTANT: Close the chat client to release aiohttp session
+                # AzureAIAgentClient doesn't support async context manager,
+                # so we must explicitly close it to avoid "Unclosed client session" warnings
+                await chat_client.close()
 
     except ConnectionError as e:
         print(f"\nConnection Error: {e}")

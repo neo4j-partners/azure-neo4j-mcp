@@ -172,3 +172,54 @@ To remove the MCP server (from project root):
 cd ..
 ./scripts/cleanup.sh
 ```
+
+## Future Improvements
+
+The following improvements are planned to enhance the sample agents. See `sample-maf-agent/IMPROVE.md` for implementation details.
+
+### OpenTelemetry Observability Support
+
+Add distributed tracing using OpenTelemetry to provide visibility into agent execution:
+- Optional `--trace` flag to enable tracing
+- OTLP exporter for trace collection
+- Trace ID printing for debugging
+- Integration with Azure Monitor / Aspire Dashboard
+
+### DevUI Support for Interactive Debugging
+
+Add the MAF DevUI for visual agent debugging:
+- `uv run start-samples devui` command
+- Visual conversation history
+- Interactive testing interface
+- Real-time agent state inspection
+
+### Streaming Response Support
+
+Add streaming responses for better user experience:
+- Optional `--stream` flag to enable streaming
+- Use `agent.run_stream()` instead of `agent.run()`
+- Real-time token output as responses generate
+
+### Enhanced Error Handling with Graceful Degradation
+
+Improve error handling to allow agents to continue on partial failures:
+- Return error info instead of raising exceptions
+- Truncate long error messages for readability
+- Allow demos to continue with partial results
+
+### Custom Tools with @ai_function Decorator
+
+When adding custom tools to agents, use the `@ai_function` decorator pattern:
+
+```python
+from agent_framework import ai_function
+from typing import Annotated
+
+@ai_function(description="Search the Neo4j knowledge graph")
+def search_knowledge_graph(
+    query: Annotated[str, "The search query"],
+    top_k: Annotated[int, "Maximum results"] = 5,
+) -> dict[str, Any]:
+    """Search the knowledge graph and return results."""
+    return {"query": query, "results": [...]}
+```

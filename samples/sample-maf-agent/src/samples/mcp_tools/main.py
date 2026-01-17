@@ -22,10 +22,10 @@ import os
 from pathlib import Path
 
 from samples.shared import (
-    AgentConfig,
     ChatAgent,
     create_agent_client,
     get_logger,
+    load_agent_config,
     print_header,
 )
 
@@ -83,8 +83,9 @@ async def demo_mcp_tools() -> None:
     print("as a tool source for the agent, following Pattern 2:")
     print("Define MCP Tool at Agent Creation.\n")
 
-    # Load configurations
-    agent_config = AgentConfig()
+    # BEST PRACTICE: Use factory function to load config from environment
+    # Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/cli.py
+    agent_config = load_agent_config()
     mcp_config = load_mcp_config()
 
     # Validate Azure AI configuration
@@ -154,54 +155,62 @@ async def demo_mcp_tools() -> None:
 
                 # Create agent client and ChatAgent with MCP tools
                 chat_client = create_agent_client(agent_config, credential)
-                agent = ChatAgent(
-                    name=agent_config.name,
-                    chat_client=chat_client,
-                    instructions=(
-                        "You are a helpful assistant that answers questions about data "
-                        "stored in a Neo4j graph database. You have access to MCP tools that "
-                        "let you:\n"
-                        "- get-schema: Retrieve the database schema to understand what data exists\n"
-                        "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
-                        "Always start by getting the schema to understand the data model, "
-                        "then formulate Cypher queries to answer user questions. "
-                        "When writing Cypher queries, use best practices:\n"
-                        "- Use parameterized queries when possible\n"
-                        "- Limit results appropriately\n"
-                        "- Use OPTIONAL MATCH for relationships that may not exist"
-                    ),
-                    tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
-                )
-                print("\nAgent created with MCP tools!\n")
-                print("-" * 50)
 
-                # BEST PRACTICE: Thread Management for Multi-Turn Conversations
-                # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
-                #
-                # Creating an explicit thread preserves conversation history, allowing
-                # the agent to remember previous queries and build coherent responses.
-                # Without a thread, each query is treated as an independent conversation.
-                thread = agent.get_new_thread()
-
-                # Demo queries that work with any Neo4j database
-                queries = [
-                    "What is the schema of this database?",
-                    "How many nodes are in the database?",
-                    "What are the most common relationship types?",
-                ]
-
-                for i, query in enumerate(queries, 1):
-                    print(f"\n[Query {i}] User: {query}\n")
-
-                    # Pass the thread to maintain conversation context across queries
-                    response = await agent.run(query, thread=thread)
-                    print(f"[Query {i}] Agent: {response.text}\n")
+                try:
+                    agent = ChatAgent(
+                        name=agent_config.name,
+                        chat_client=chat_client,
+                        instructions=(
+                            "You are a helpful assistant that answers questions about data "
+                            "stored in a Neo4j graph database. You have access to MCP tools that "
+                            "let you:\n"
+                            "- get-schema: Retrieve the database schema to understand what data exists\n"
+                            "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
+                            "Always start by getting the schema to understand the data model, "
+                            "then formulate Cypher queries to answer user questions. "
+                            "When writing Cypher queries, use best practices:\n"
+                            "- Use parameterized queries when possible\n"
+                            "- Limit results appropriately\n"
+                            "- Use OPTIONAL MATCH for relationships that may not exist"
+                        ),
+                        tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
+                    )
+                    print("\nAgent created with MCP tools!\n")
                     print("-" * 50)
 
-                print(
-                    "\nDemo complete! The agent used MCP tools to query "
-                    "the Neo4j database through the deployed MCP server."
-                )
+                    # BEST PRACTICE: Thread Management for Multi-Turn Conversations
+                    # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+                    #
+                    # Creating an explicit thread preserves conversation history, allowing
+                    # the agent to remember previous queries and build coherent responses.
+                    # Without a thread, each query is treated as an independent conversation.
+                    thread = agent.get_new_thread()
+
+                    # Demo queries that work with any Neo4j database
+                    queries = [
+                        "What is the schema of this database?",
+                        "How many nodes are in the database?",
+                        "What are the most common relationship types?",
+                    ]
+
+                    for i, query in enumerate(queries, 1):
+                        print(f"\n[Query {i}] User: {query}\n")
+
+                        # Pass the thread to maintain conversation context across queries
+                        response = await agent.run(query, thread=thread)
+                        print(f"[Query {i}] Agent: {response.text}\n")
+                        print("-" * 50)
+
+                    print(
+                        "\nDemo complete! The agent used MCP tools to query "
+                        "the Neo4j database through the deployed MCP server."
+                    )
+
+                finally:
+                    # IMPORTANT: Close the chat client to release aiohttp session
+                    # AzureAIAgentClient doesn't support async context manager,
+                    # so we must explicitly close it to avoid "Unclosed client session" warnings
+                    await chat_client.close()
 
     except ToolException as e:
         # Connection failures, transport errors

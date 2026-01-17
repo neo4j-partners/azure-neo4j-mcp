@@ -30,47 +30,105 @@ Example:
 Note: The parameter is `credential`, not `async_credential`.
 """
 
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Optional
+
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .logging import get_logger
 
 logger = get_logger()
 
 
-class AgentConfig(BaseSettings):
+# BEST PRACTICE: Dataclass Configuration Pattern
+# Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/workflow.py
+#
+# Using @dataclass(slots=True) for configuration provides several benefits:
+# 1. Memory efficiency: slots=True reduces memory overhead per instance
+# 2. Immutability clarity: frozen=True can be added if config shouldn't change
+# 3. Type hints: Clear documentation of expected types
+# 4. Default values: Simple, readable default definitions
+# 5. No magic: Unlike pydantic-settings, behavior is explicit and predictable
+# 6. Testability: Easy to create test configurations without environment setup
+#
+# Environment variables are loaded via a factory function, keeping the dataclass
+# pure and separating concerns between structure and loading logic.
+
+
+@dataclass(slots=True)
+class AgentConfig:
     """
-    Agent configuration loaded from environment variables.
+    Agent configuration for Azure AI Foundry.
+
+    BEST PRACTICE: Use dataclass for configuration structure.
+    Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/workflow.py
+
+    This dataclass defines the structure. Use load_agent_config() to create
+    an instance from environment variables, or construct directly for testing.
 
     Attributes:
-        name: Name of the agent (AZURE_AI_AGENT_NAME)
-        model: Model deployment name (AZURE_AI_MODEL_NAME)
-        instructions: System instructions for the agent
-        project_endpoint: Microsoft Foundry project endpoint (AZURE_AI_PROJECT_ENDPOINT)
+        name: Name of the agent
+        model: Model deployment name (e.g., "gpt-4o")
+        instructions: Default system instructions for the agent
+        project_endpoint: Azure AI Foundry project endpoint URL
     """
 
-    model_config = SettingsConfigDict(
-        env_prefix="",
-        extra="ignore",
-    )
+    name: str = "api-arches-agent"
+    model: str = "gpt-4o"
+    instructions: str = "You are a helpful API assistant."
+    project_endpoint: Optional[str] = None
 
-    name: str = Field(
-        default="api-arches-agent",
-        validation_alias="AZURE_AI_AGENT_NAME",
-    )
-    model: str = Field(
-        default="gpt-4o",
-        validation_alias="AZURE_AI_MODEL_NAME",
-    )
-    instructions: str = Field(
-        default="You are a helpful API assistant.",
-    )
-    project_endpoint: str | None = Field(
-        default=None,
-        validation_alias="AZURE_AI_PROJECT_ENDPOINT",
+
+@dataclass(slots=True)
+class DemoConfig:
+    """
+    Runtime configuration for demo execution.
+
+    BEST PRACTICE: Separate runtime options from service configuration.
+    Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/workflow.py
+
+    This dataclass contains options that affect demo behavior, not service connections.
+
+    Attributes:
+        debug: Enable verbose debug output
+        streaming: Use streaming responses instead of blocking
+        top_k: Number of results to retrieve from context providers
+    """
+
+    debug: bool = False
+    streaming: bool = False
+    top_k: int = 5
+
+
+def load_agent_config() -> AgentConfig:
+    """
+    Load AgentConfig from environment variables.
+
+    BEST PRACTICE: Factory function for environment loading.
+    Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/cli.py
+
+    This pattern separates:
+    - Structure definition (dataclass) from loading logic (this function)
+    - Makes testing easier: construct AgentConfig directly without env vars
+    - Makes dependencies explicit: you can see exactly what env vars are used
+
+    Environment Variables:
+        AZURE_AI_AGENT_NAME: Agent name (default: "api-arches-agent")
+        AZURE_AI_MODEL_NAME: Model deployment name (default: "gpt-4o")
+        AZURE_AI_PROJECT_ENDPOINT: Azure AI Foundry project endpoint (required)
+
+    Returns:
+        AgentConfig instance populated from environment.
+    """
+    return AgentConfig(
+        name=os.getenv("AZURE_AI_AGENT_NAME", "api-arches-agent"),
+        model=os.getenv("AZURE_AI_MODEL_NAME", "gpt-4o"),
+        project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT"),
     )
 
 
@@ -109,3 +167,12 @@ def create_agent_client(config: AgentConfig, credential: AzureCliCredential) -> 
     )
 
 
+# Re-export for convenience - allows `from samples.shared import AgentConfig`
+# without breaking existing imports that used the old pydantic-based class
+__all__ = [
+    "AgentConfig",
+    "DemoConfig",
+    "load_agent_config",
+    "create_agent_client",
+    "ChatAgent",
+]

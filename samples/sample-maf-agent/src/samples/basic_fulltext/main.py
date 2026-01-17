@@ -15,7 +15,7 @@ async def demo_context_provider_basic() -> None:
     from azure.identity.aio import AzureCliCredential
 
     from agent_framework_neo4j import Neo4jContextProvider, Neo4jSettings
-    from samples.shared import AgentConfig, ChatAgent, create_agent_client, get_logger
+    from samples.shared import ChatAgent, create_agent_client, get_logger, load_agent_config
 
     logger = get_logger()
 
@@ -23,8 +23,9 @@ async def demo_context_provider_basic() -> None:
     print("This demo shows the Neo4jContextProvider enhancing ChatAgent")
     print("responses with knowledge graph context using fulltext search.\n")
 
-    # Load configs
-    agent_config = AgentConfig()
+    # BEST PRACTICE: Use factory function to load config from environment
+    # Reference: Agent-Framework-Samples/09.Cases/AgenticMarketingContentGen/marketing_workflow/cli.py
+    agent_config = load_agent_config()
     neo4j_settings = Neo4jSettings()
 
     if not agent_config.project_endpoint:
@@ -74,46 +75,54 @@ async def demo_context_provider_basic() -> None:
 
             # Create agent client and ChatAgent
             chat_client = create_agent_client(agent_config, credential)
-            agent = ChatAgent(
-                name=agent_config.name,
-                chat_client=chat_client,
-                instructions=(
-                    "You are a helpful assistant that answers questions about companies "
-                    "using the provided knowledge graph context. Be concise and cite "
-                    "specific information from the context when available."
-                ),
-                context_providers=provider,
-            )
-            print("Agent created with context provider!\n")
-            print("-" * 50)
 
-            # BEST PRACTICE: Thread Management for Multi-Turn Conversations
-            # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
-            #
-            # Creating an explicit thread preserves conversation history, allowing
-            # the agent to remember previous queries and build coherent responses.
-            # Without a thread, each query is treated as an independent conversation.
-            thread = agent.get_new_thread()
-
-            # Demo queries that will trigger context retrieval
-            queries = [
-                "What products does Microsoft offer?",
-                "Tell me about risk factors for technology companies",
-                "What are some financial metrics mentioned in SEC filings?",
-            ]
-
-            for i, query in enumerate(queries, 1):
-                print(f"\n[Query {i}] User: {query}\n")
-
-                # Pass the thread to maintain conversation context across queries
-                response = await agent.run(query, thread=thread)
-                print(f"[Query {i}] Agent: {response.text}\n")
+            try:
+                agent = ChatAgent(
+                    name=agent_config.name,
+                    chat_client=chat_client,
+                    instructions=(
+                        "You are a helpful assistant that answers questions about companies "
+                        "using the provided knowledge graph context. Be concise and cite "
+                        "specific information from the context when available."
+                    ),
+                    context_providers=provider,
+                )
+                print("Agent created with context provider!\n")
                 print("-" * 50)
 
-            print(
-                "\nDemo complete! The context provider enriched agent responses "
-                "with knowledge graph data."
-            )
+                # BEST PRACTICE: Thread Management for Multi-Turn Conversations
+                # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+                #
+                # Creating an explicit thread preserves conversation history, allowing
+                # the agent to remember previous queries and build coherent responses.
+                # Without a thread, each query is treated as an independent conversation.
+                thread = agent.get_new_thread()
+
+                # Demo queries that will trigger context retrieval
+                queries = [
+                    "What products does Microsoft offer?",
+                    "Tell me about risk factors for technology companies",
+                    "What are some financial metrics mentioned in SEC filings?",
+                ]
+
+                for i, query in enumerate(queries, 1):
+                    print(f"\n[Query {i}] User: {query}\n")
+
+                    # Pass the thread to maintain conversation context across queries
+                    response = await agent.run(query, thread=thread)
+                    print(f"[Query {i}] Agent: {response.text}\n")
+                    print("-" * 50)
+
+                print(
+                    "\nDemo complete! The context provider enriched agent responses "
+                    "with knowledge graph data."
+                )
+
+            finally:
+                # IMPORTANT: Close the chat client to release aiohttp session
+                # AzureAIAgentClient doesn't support async context manager,
+                # so we must explicitly close it to avoid "Unclosed client session" warnings
+                await chat_client.close()
 
     except ConnectionError as e:
         print(f"\nConnection Error: {e}")
