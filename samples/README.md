@@ -29,7 +29,7 @@ The samples have their **own separate Azure infrastructure** for AI models:
 - [Azure Developer CLI (azd)](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) installed
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - Python 3.10+
-- Neo4j database (e.g., [Neo4j Aura](https://neo4j.com/cloud/aura/))
+- Neo4j database (e.g., [Neo4j Aura](https://neo4j.com/cloud/aura/)) - see [SETUP.md](SETUP.md) for database setup instructions
 
 ## Quick Start
 

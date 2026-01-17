@@ -126,100 +126,109 @@ async def demo_mcp_tools() -> None:
         # 4. Clear resource lifetime: Easy to see which resources are in scope
         # 5. Proper ordering: Resources are released in reverse order of acquisition
         #
-        # Note: AsyncClient must be opened first as MCPStreamableHTTPTool uses it.
-        # We nest the context managers to ensure proper resource ordering.
-        async with AsyncClient(headers=auth_headers) as http_client:
-            # Create MCP tool with authentication and tool filtering
-            # allowed_tools restricts to read-only operations for safety
-            mcp_tool = MCPStreamableHTTPTool(
-                name="Neo4j MCP Server",
-                url=mcp_config["endpoint"],
-                http_client=http_client,
-                allowed_tools=["get-schema", "read-cypher"],  # Read-only for safety
-            )
+        # NOTE: httpx.AsyncClient is created WITHOUT a context manager here because
+        # MCPStreamableHTTPTool manages its lifecycle via terminate_on_close=True.
+        # Using a separate context manager would cause double-close issues.
+        http_client = AsyncClient(headers=auth_headers)
 
-            # Nested grouped context managers for credential and MCP tool
-            async with (
-                AzureCliCredential() as credential,
-                mcp_tool,
-            ):
-                print("Connected to MCP server!\n")
+        # Create MCP tool with authentication and tool filtering
+        # allowed_tools restricts to read-only operations for safety
+        # terminate_on_close=True (default) means MCPStreamableHTTPTool will close the http_client
+        # load_prompts=False because the Neo4j MCP server only provides tools, not prompts
+        mcp_tool = MCPStreamableHTTPTool(
+            name="Neo4j MCP Server",
+            url=mcp_config["endpoint"],
+            http_client=http_client,
+            allowed_tools=["get-schema", "read-cypher"],  # Read-only for safety
+            load_prompts=False,  # Neo4j MCP server doesn't support prompts
+        )
 
-                # List discovered tools using the .functions property
-                # Reference: agent-framework/_mcp.py lines 372-377
-                print("Available tools from MCP server:")
-                for func in mcp_tool.functions:
-                    desc = func.description[:60] + "..." if len(func.description) > 60 else func.description
-                    print(f"  - {func.name}: {desc}")
+        # Grouped context managers for credential and MCP tool
+        async with (
+            AzureCliCredential() as credential,
+            mcp_tool,
+        ):
+            print("Connected to MCP server!\n")
+
+            # List discovered tools using the .functions property
+            # Reference: agent-framework/_mcp.py lines 372-377
+            print("Available tools from MCP server:")
+            for func in mcp_tool.functions:
+                desc = func.description[:60] + "..." if len(func.description) > 60 else func.description
+                print(f"  - {func.name}: {desc}")
+            print("-" * 50)
+
+            # Create agent client and ChatAgent with MCP tools
+            chat_client = create_agent_client(agent_config, credential)
+
+            try:
+                agent = ChatAgent(
+                    name=agent_config.name,
+                    chat_client=chat_client,
+                    instructions=(
+                        "You are a helpful assistant that answers questions about data "
+                        "stored in a Neo4j graph database. You have access to MCP tools that "
+                        "let you:\n"
+                        "- get-schema: Retrieve the database schema to understand what data exists\n"
+                        "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
+                        "Always start by getting the schema to understand the data model, "
+                        "then formulate Cypher queries to answer user questions. "
+                        "When writing Cypher queries, use best practices:\n"
+                        "- Use parameterized queries when possible\n"
+                        "- Limit results appropriately\n"
+                        "- Use OPTIONAL MATCH for relationships that may not exist"
+                    ),
+                    tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
+                )
+                print("\nAgent created with MCP tools!\n")
                 print("-" * 50)
 
-                # Create agent client and ChatAgent with MCP tools
-                chat_client = create_agent_client(agent_config, credential)
+                # BEST PRACTICE: Thread Management for Multi-Turn Conversations
+                # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
+                #
+                # Creating an explicit thread preserves conversation history, allowing
+                # the agent to remember previous queries and build coherent responses.
+                # Without a thread, each query is treated as an independent conversation.
+                thread = agent.get_new_thread()
 
-                try:
-                    agent = ChatAgent(
-                        name=agent_config.name,
-                        chat_client=chat_client,
-                        instructions=(
-                            "You are a helpful assistant that answers questions about data "
-                            "stored in a Neo4j graph database. You have access to MCP tools that "
-                            "let you:\n"
-                            "- get-schema: Retrieve the database schema to understand what data exists\n"
-                            "- read-cypher: Execute read-only Cypher queries to answer questions\n\n"
-                            "Always start by getting the schema to understand the data model, "
-                            "then formulate Cypher queries to answer user questions. "
-                            "When writing Cypher queries, use best practices:\n"
-                            "- Use parameterized queries when possible\n"
-                            "- Limit results appropriately\n"
-                            "- Use OPTIONAL MATCH for relationships that may not exist"
-                        ),
-                        tools=mcp_tool,  # Pattern 2: Tool defined at agent creation
-                    )
-                    print("\nAgent created with MCP tools!\n")
+                # Demo queries that work with any Neo4j database
+                queries = [
+                    "What is the schema of this database?",
+                    "How many nodes are in the database?",
+                    "What are the most common relationship types?",
+                ]
+
+                for i, query in enumerate(queries, 1):
+                    print(f"\n[Query {i}] User: {query}\n")
+
+                    # Pass the thread to maintain conversation context across queries
+                    response = await agent.run(query, thread=thread)
+                    print(f"[Query {i}] Agent: {response.text}\n")
                     print("-" * 50)
 
-                    # BEST PRACTICE: Thread Management for Multi-Turn Conversations
-                    # Reference: Agent-Framework-Samples/08.EvaluationAndTracing/python/tracer_aspire/simple.py
-                    #
-                    # Creating an explicit thread preserves conversation history, allowing
-                    # the agent to remember previous queries and build coherent responses.
-                    # Without a thread, each query is treated as an independent conversation.
-                    thread = agent.get_new_thread()
+                print(
+                    "\nDemo complete! The agent used MCP tools to query "
+                    "the Neo4j database through the deployed MCP server."
+                )
 
-                    # Demo queries that work with any Neo4j database
-                    queries = [
-                        "What is the schema of this database?",
-                        "How many nodes are in the database?",
-                        "What are the most common relationship types?",
-                    ]
-
-                    for i, query in enumerate(queries, 1):
-                        print(f"\n[Query {i}] User: {query}\n")
-
-                        # Pass the thread to maintain conversation context across queries
-                        response = await agent.run(query, thread=thread)
-                        print(f"[Query {i}] Agent: {response.text}\n")
-                        print("-" * 50)
-
-                    print(
-                        "\nDemo complete! The agent used MCP tools to query "
-                        "the Neo4j database through the deployed MCP server."
-                    )
-
-                finally:
-                    # IMPORTANT: Close the chat client to release aiohttp session
-                    # AzureAIAgentClient doesn't support async context manager,
-                    # so we must explicitly close it to avoid "Unclosed client session" warnings
-                    await chat_client.close()
+            finally:
+                # IMPORTANT: Close the chat client to release aiohttp session
+                # AzureAIAgentClient doesn't support async context manager,
+                # so we must explicitly close it to avoid "Unclosed client session" warnings
+                await chat_client.close()
 
     except ToolException as e:
         # Connection failures, transport errors
         print(f"\nConnection failed: {e}")
+        if hasattr(e, 'inner_exception') and e.inner_exception:
+            print(f"  Inner error: {e.inner_exception}")
         print("Check that the MCP server is deployed and the API key is correct.")
         print("Run './scripts/deploy.sh' to deploy or check MCP_ACCESS.json")
     except ToolExecutionException as e:
         # Tool execution failures, session errors
         print(f"\nTool execution failed: {e}")
+        if hasattr(e, 'inner_exception') and e.inner_exception:
+            print(f"  Inner error: {e.inner_exception}")
         print("The MCP server is reachable but the tool call failed.")
     except Exception as e:
         logger.error(f"Unexpected error during demo: {e}")
