@@ -6,19 +6,20 @@ This guide walks you through setting up the Neo4j Aura database with the SEC 10-
 
 After your Aura instance is running, restore the pre-built knowledge graph:
 
-1. Go to your instance in the [Aura Console](https://console.neo4j.io)
-2. Click the **...** menu on your instance and select **Backup & restore**
+1. **Download the backup file first**
+   - Download `finance_data.backup` from [neo4j-partners/workshop-financial-data](https://github.com/neo4j-partners/workshop-financial-data/tree/main/backup)
+
+2. Go to your instance in the [Aura Console](https://console.neo4j.io)
+
+3. Click the **...** menu on your instance and select **Backup & restore**
 
    ![](images/backup_restore.png)
 
-3. Click **Upload backup** to open the upload dialog, then drag the backup file into the dialog:
+4. Click **Upload backup** to open the upload dialog, then drag the backup file into the dialog:
 
    ![](images/restore_drag.png)
 
-   **Use the pre-built backup file**
-   - Download `finance_data.backup` from [neo4j-partners/workshop-financial-data](https://github.com/neo4j-partners/workshop-financial-data/tree/main/backup)
-
-4. Wait for the restore to complete - your instance will restart with the SEC 10-K filings knowledge graph
+5. Wait for the restore to complete - your instance will restart with the SEC 10-K filings knowledge graph
 
 The backup contains:
 - SEC 10-K filing documents from major companies (Apple, Microsoft, NVIDIA, etc.)
