@@ -6,70 +6,10 @@ source for Microsoft Agent Framework agents. Instead of connecting directly
 to Neo4j, the agent calls the MCP server endpoint which handles the database
 connection.
 
-=============================================================================
-MCP INTEGRATION PATTERNS WITH MICROSOFT AGENT FRAMEWORK
-=============================================================================
+This implementation uses Pattern 2 (Define MCP Tool at Agent Creation) where
+the MCPStreamableHTTPTool is passed directly to ChatAgent.
 
-The Agent Framework provides two patterns for integrating MCP tools:
-
-PATTERN 1: Pass MCP Tool at Runtime
------------------------------------
-Create the MCP tool and pass it when calling agent.run(). Use this for
-session-based or temporary tool usage:
-
-    async with MCPStreamableHTTPTool(...) as mcp_tool:
-        agent = ChatAgent(chat_client=client, name="Agent", instructions="...")
-        result = await agent.run(query, tools=mcp_tool)  # Tool passed at runtime
-
-PATTERN 2: Define MCP Tool at Agent Creation (Used in this sample)
-------------------------------------------------------------------
-Pass the MCPStreamableHTTPTool directly to ChatAgent, making it a permanent
-part of the agent's definition:
-
-    async with MCPStreamableHTTPTool(...) as mcp_tool:
-        agent = ChatAgent(
-            chat_client=client,
-            name="Agent",
-            instructions="...",
-            tools=mcp_tool,  # Tool defined at creation
-        )
-        result = await agent.run(query)
-
-Reference: agent-framework/python/samples/getting_started/mcp/mcp_api_key_auth.py
-
-=============================================================================
-MCP BEST PRACTICES
-=============================================================================
-
-1. AUTHENTICATION
-   - Use httpx.AsyncClient with headers for Bearer token or API key auth
-   - Common patterns: {"Authorization": f"Bearer {token}"} or {"X-API-Key": key}
-   - Create AsyncClient WITHOUT context manager; let MCPStreamableHTTPTool manage it
-   - Reference: agent-framework/python/samples/getting_started/mcp/mcp_api_key_auth.py
-
-2. SERVER CAPABILITIES
-   - Check if the MCP server supports prompts before enabling load_prompts=True
-   - Set load_prompts=False for servers that only provide tools (like Neo4j MCP)
-   - Use allowed_tools to restrict which tools the agent can access
-
-3. ERROR HANDLING
-   - Catch ToolException for connection failures (wrong URL, network issues)
-   - Catch ToolExecutionException for tool execution failures (bad queries)
-   - Always check inner_exception for the root cause of errors
-
-4. RESOURCE MANAGEMENT
-   - MCPStreamableHTTPTool is an async context manager - use `async with`
-   - terminate_on_close=True (default) means the tool closes the httpx client
-   - Don't wrap AsyncClient in its own context manager when passing to MCP tool
-
-5. TOOL FILTERING FOR SAFETY
-   - Use allowed_tools=["tool1", "tool2"] to restrict available tools
-   - For databases, consider restricting to read-only tools in production
-
-The MCP server provides three tools:
-- get-schema: Retrieve the database schema
-- read-cypher: Execute read-only Cypher queries
-- write-cypher: Execute write Cypher queries (restricted in this sample)
+For MCP integration patterns and best practices, see samples/README.md.
 """
 
 from __future__ import annotations

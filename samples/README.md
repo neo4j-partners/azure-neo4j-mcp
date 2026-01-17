@@ -79,6 +79,16 @@ uv sync
 uv run start-samples
 ```
 
+
+### 3. Cleanup
+
+To remove the Azure AI infrastructure:
+
+```bash
+cd samples
+azd down
+```
+
 ## Overview of Samples
 
 ### langgraph-mcp-agent
@@ -157,23 +167,94 @@ Azure AI Foundry serverless models require one of these regions:
 - `westus2` (West US 2)
 - `westus3` (West US 3)
 
-## Cleanup
+## LangGraph Best Practices
 
-To remove the Azure AI infrastructure:
+See [`langgraph-mcp-agent/LANGGRAPH_BEST_PRACTICES.md`](langgraph-mcp-agent/LANGGRAPH_BEST_PRACTICES.md) for comprehensive guidance on building agents with LangGraph 1.0+, including:
 
-```bash
-cd samples
-azd down
+- API migration from deprecated `create_react_agent` to `create_agent`
+- MCP client integration patterns
+- Async handling and checkpointing
+- Common pitfalls and solutions
+
+### OpenAI Schema Compatibility Fix
+
+When using Azure OpenAI (GPT-4) instead of Claude, you may encounter schema validation errors:
+
+```
+openai.BadRequestError: Invalid schema for function 'get-schema':
+object schema missing properties
 ```
 
-To remove the MCP server (from project root):
+**Root Cause:** OpenAI requires `{"type": "object", "properties": {}}` for tools with no parameters, while Claude accepts `{"type": "object"}` alone. The mcp-go library's `omitempty` JSON tags caused empty `properties` maps to be omitted during serialization.
 
-```bash
-cd ..
-./scripts/cleanup.sh
+**The Fix:** This was resolved in the Neo4j MCP server ([commit 35eefd4](https://github.com/neo4j-field/neo4j-mcp-server/commit/35eefd4)) by adding explicit empty input schemas to parameterless tools. See [`PR_NO_PARAMS.md`](https://github.com/neo4j-field/neo4j-mcp-server/blob/main/PR_NO_PARAMS.md) for implementation details.
+
+
+## MAF Agent Best Practices and Future Improvements
+
+### MCP Integration Patterns
+
+The Microsoft Agent Framework provides two patterns for integrating MCP tools with agents:
+
+**Pattern 1: Pass MCP Tool at Runtime**
+
+Create the MCP tool and pass it when calling `agent.run()`. Use this for session-based or temporary tool usage:
+
+```python
+async with MCPStreamableHTTPTool(...) as mcp_tool:
+    agent = ChatAgent(chat_client=client, name="Agent", instructions="...")
+    result = await agent.run(query, tools=mcp_tool)  # Tool passed at runtime
 ```
 
-## Future Improvements
+**Pattern 2: Define MCP Tool at Agent Creation** (Used in `sample-maf-agent/mcp_tools`)
+
+Pass the `MCPStreamableHTTPTool` directly to `ChatAgent`, making it a permanent part of the agent's definition. This is preferred when the agent always needs the same tools:
+
+```python
+async with MCPStreamableHTTPTool(...) as mcp_tool:
+    agent = ChatAgent(
+        chat_client=client,
+        name="Agent",
+        instructions="...",
+        tools=mcp_tool,  # Tool defined at creation
+    )
+    result = await agent.run(query)
+```
+
+**MCP Best Practices:**
+
+1. **Authentication**
+   - Use `httpx.AsyncClient` with headers for Bearer token or API key auth
+   - Common patterns: `{"Authorization": f"Bearer {token}"}` or `{"X-API-Key": key}`
+   - Create `AsyncClient` WITHOUT context manager; let `MCPStreamableHTTPTool` manage it
+
+2. **Server Capabilities**
+   - Check if the MCP server supports prompts before enabling `load_prompts=True`
+   - Set `load_prompts=False` for servers that only provide tools (like Neo4j MCP)
+   - Use `allowed_tools` to restrict which tools the agent can access
+
+3. **Error Handling**
+   - Catch `ToolException` for connection failures (wrong URL, network issues)
+   - Catch `ToolExecutionException` for tool execution failures (bad queries)
+   - Always check `inner_exception` for the root cause of errors
+
+4. **Resource Management**
+   - `MCPStreamableHTTPTool` is an async context manager - use `async with`
+   - `terminate_on_close=True` (default) means the tool closes the httpx client
+   - Don't wrap `AsyncClient` in its own context manager when passing to MCP tool
+
+5. **Tool Filtering for Safety**
+   - Use `allowed_tools=["get-schema", "read-cypher"]` to restrict available tools
+   - For databases, consider restricting to read-only tools in production
+
+The Neo4j MCP server provides three tools:
+- `get-schema`: Retrieve the database schema
+- `read-cypher`: Execute read-only Cypher queries
+- `write-cypher`: Execute write Cypher queries (restricted in mcp_tools sample)
+
+See [`sample-maf-agent/src/samples/mcp_tools/main.py`](sample-maf-agent/src/samples/mcp_tools/main.py) for a complete implementation example.
+
+### Future Improvements
 
 The following improvements are planned to enhance the sample agents. See `sample-maf-agent/IMPROVE.md` for implementation details.
 
