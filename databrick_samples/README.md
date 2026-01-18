@@ -2,6 +2,52 @@
 
 Sample notebooks for integrating Neo4j MCP Server with Databricks.
 
+## Cluster Setup
+
+Before running these notebooks, configure your Databricks cluster with the required libraries.
+
+### 1. Create or Edit a Cluster
+
+1. Navigate to **Compute** in the Databricks sidebar
+2. Create a new cluster or edit an existing one
+3. Under **Performance**, check **Machine learning** to enable ML Runtime
+   - This provides pre-installed PyTorch, TensorFlow, XGBoost, and MLflow
+4. Select **Databricks Runtime**: 17.3 LTS ML or later recommended
+5. Enable **Single node** for development/testing (optional)
+
+### 2. Install Required Libraries
+
+Go to the **Libraries** tab on your cluster and install these packages from PyPI:
+
+| Library | Version | Notes |
+|---------|---------|-------|
+| `databricks-agents` | `>=1.2.0` | Agent deployment framework |
+| `databricks-langchain` | `>=0.11.0` | Databricks LangChain integration |
+| `langgraph` | `==1.0.5` | LangGraph agent framework |
+| `langchain-core` | `>=1.2.0` | LangChain core |
+| `langchain-openai` | `==1.1.2` | OpenAI integration (for embeddings) |
+| `mcp` | latest | Model Context Protocol |
+| `databricks-mcp` | latest | Databricks MCP client |
+| `pydantic` | `==2.12.5` | Data validation |
+| `neo4j` | `==6.0.2` | Neo4j Python driver (optional) |
+| `neo4j-graphrag` | `>=1.10.0` | Neo4j GraphRAG (optional) |
+
+**To add a library:**
+1. Click **Install new** on the Libraries tab
+2. Select **PyPI** as the source
+3. Enter the package name with version (e.g., `langgraph==1.0.5`)
+4. Click **Install**
+
+**Tip:** Check [PyPI](https://pypi.org/) for the latest compatible versions if you encounter dependency conflicts.
+
+### 3. Optional: Maven Libraries
+
+For direct Spark-Neo4j integration (not required for MCP):
+
+| Library | Coordinates |
+|---------|-------------|
+| Neo4j Spark Connector | `org.neo4j:neo4j-connector-apache-spark_2.13:5.3.10` |
+
 ## Files
 
 | File | Description |
@@ -139,11 +185,13 @@ The `neo4j_mcp_agent.py` and `neo4j-mcp-agent-deploy.ipynb` files provide a comp
 ### Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐
-│  LangGraph      │────▶│ Unity Catalog HTTP   │────▶│ Neo4j MCP Server│
-│  Agent          │     │ Connection Proxy     │     │ (Azure)         │
-│                 │     │ /api/2.0/mcp/external│     │                 │
-└─────────────────┘     └──────────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  LangGraph      │────▶│ Unity Catalog HTTP   │────▶│ Neo4j MCP Server│────▶│ Neo4j Database  │
+│  Agent          │     │ Connection Proxy     │     │ (Azure)         │     │                 │
+│                 │     │ /api/2.0/mcp/external│     │                 │     │                 │
+└─────────────────┘     └──────────────────────┘     └─────────────────┘     └─────────────────┘
+       MCP tool calls           Bearer Token              Cypher Queries
+       (JSON-RPC)               from Secrets              (read-cypher tool)
 ```
 
 ### How It Works
