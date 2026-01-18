@@ -9,6 +9,11 @@
 // Traffic flow:
 // Internet -> Ingress (443) -> Nginx (8080) -> MCP Server (8000) -> Neo4j
 //
+// Authentication:
+// - Nginx validates the MCP API key on incoming requests
+// - MCP Server receives Neo4j credentials directly as environment variables
+// - MCP Server validates Neo4j connectivity at startup (fail-fast)
+//
 // Configures:
 // - Fixed 1 replica for consistent demo behavior
 // - Managed identity for ACR image pull and Key Vault access
@@ -136,15 +141,6 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
               name: 'MCP_API_KEY'
               secretRef: 'mcp-api-key'
             }
-            // Neo4j credentials for Basic Auth to MCP server
-            {
-              name: 'NEO4J_USERNAME'
-              secretRef: 'neo4j-username'
-            }
-            {
-              name: 'NEO4J_PASSWORD'
-              secretRef: 'neo4j-password'
-            }
           ]
           // Health probes using Nginx's HTTP health endpoints
           probes: [
@@ -182,13 +178,19 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
             memory: '1Gi'
           }
           env: [
-            // Neo4j connection URI (from Key Vault)
-            // Note: Username/password are NOT passed here so MCP server skips startup
-            // verification in HTTP mode. Credentials come from per-request Basic Auth
-            // headers injected by the nginx proxy.
+            // Neo4j connection credentials (from Key Vault)
+            // Server validates Neo4j connectivity at startup for fail-fast behavior
             {
               name: 'NEO4J_URI'
               secretRef: 'neo4j-uri'
+            }
+            {
+              name: 'NEO4J_USERNAME'
+              secretRef: 'neo4j-username'
+            }
+            {
+              name: 'NEO4J_PASSWORD'
+              secretRef: 'neo4j-password'
             }
             {
               name: 'NEO4J_DATABASE'

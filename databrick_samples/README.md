@@ -219,6 +219,17 @@ Then run `neo4j-mcp-agent-deploy.ipynb`:
 4. **Register to Unity Catalog** - Store for governance
 5. **Deploy** - Create a serving endpoint
 
+**Step 3: Verify Deployment**
+
+Check the deployment status in **Serving endpoints**:
+- Navigate to **Serving** in the sidebar (under AI/ML)
+- Look for `agents_mcp_demo_catalog-...` endpoint
+- Wait for **State** to show "Ready"
+
+View the registered model in **Catalog Explorer**:
+- Navigate to **Catalog** > **mcp_demo_catalog** > **agents**
+- Click the **Models** tab to see `neo4j_mcp_agent`
+
 ### Agent Configuration
 
 Edit `neo4j_mcp_agent.py` to customize:
