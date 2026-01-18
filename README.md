@@ -20,8 +20,8 @@ Deploy the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Co
 │    │  │                      Container App (1 replica)                      │  │   │
 │    │  │  ┌─────────────────────┐         ┌──────────────────────────────┐  │  │   │
 │    │  │  │  Auth Proxy (Nginx) │ ──────► │    Neo4j MCP Server          │  │  │   │
-│    │  │  │  Port 8080          │ Basic   │    Port 8000 (localhost)     │  │  │   │
-│    │  │  │  - API Key Validate │  Auth   │    - MCP Protocol Handler    │  │  │   │
+│    │  │  │  Port 8080          │         │    Port 8000 (localhost)     │  │  │   │
+│    │  │  │  - API Key Validate │         │    - MCP Protocol Handler    │  │  │   │
 │    │  │  │  - Rate Limiting    │         │    - Cypher Query Execution  │  │  │   │
 │    │  │  │  - Security Headers │         │    - Schema Discovery        │  │  │   │
 │    │  │  └─────────────────────┘         └──────────────────────────────┘  │  │   │
@@ -53,8 +53,8 @@ The Container App runs two containers as sidecars:
 
 | Container | Port | Purpose |
 |-----------|------|---------|
-| **Auth Proxy (Nginx)** | 8080 (external) | Validates API keys, applies rate limiting, adds security headers, proxies to MCP server with Basic Auth |
-| **MCP Server** | 8000 (localhost) | Handles MCP protocol requests, executes Cypher queries against Neo4j |
+| **Auth Proxy (Nginx)** | 8080 (external) | Validates API keys, applies rate limiting, adds security headers, proxies to MCP server |
+| **MCP Server** | 8000 (localhost) | Handles MCP protocol requests, executes Cypher queries against Neo4j using startup credentials |
 
 ### Supporting Services
 
@@ -68,17 +68,17 @@ The Container App runs two containers as sidecars:
 ### Authentication Flow
 
 ```
-┌──────────┐      API Key       ┌────────────┐     Basic Auth     ┌────────────┐     Cypher      ┌───────────┐
+┌──────────┐      API Key       ┌────────────┐                    ┌────────────┐     Cypher      ┌───────────┐
 │ AI Agent │ ─────────────────► │ Auth Proxy │ ─────────────────► │ MCP Server │ ──────────────► │  Neo4j    │
-│          │   Bearer Token     │  (Nginx)   │  (injected from    │            │   bolt+s://     │  Database │
-└──────────┘                    │            │   Key Vault)       │            │                 └───────────┘
-                                └────────────┘                    └────────────┘
+│          │   Bearer Token     │  (Nginx)   │                    │ (has creds │   bolt+s://     │  Database │
+└──────────┘                    └────────────┘                    │ from startup)               └───────────┘
+                                                                  └────────────┘
 ```
 
 1. Client sends request with `Authorization: Bearer <API_KEY>` or `X-API-Key: <API_KEY>`
 2. Auth proxy validates the API key against Key Vault secret
-3. If valid, proxy injects Basic Auth credentials and forwards to MCP server
-4. MCP server processes the request and queries Neo4j
+3. If valid, proxy forwards the request to MCP server
+4. MCP server processes the request using Neo4j credentials received at startup
 5. Response flows back through the proxy to the client
 
 ## Quick Start
@@ -104,7 +104,7 @@ git clone -b feat/http-env-credentials https://github.com/neo4j-partners/mcp.git
 
 **Why the fork?** The [neo4j-partners/mcp](https://github.com/neo4j-partners/mcp) fork on the `feat/http-env-credentials` branch adds features required for Azure Container Apps deployment:
 
-- **Environment variable authentication fallback**: When running in HTTP streaming mode, the server can use `NEO4J_USERNAME` and `NEO4J_PASSWORD` environment variables as fallback credentials when Basic Auth headers are not provided. This enables the sidecar architecture where the auth proxy injects credentials.
+- **Environment variable authentication**: When running in HTTP streaming mode, the server uses `NEO4J_USERNAME` and `NEO4J_PASSWORD` environment variables to connect to Neo4j at startup. This enables fail-fast behavior where credential issues are detected immediately rather than on first request.
 - **Relaxed auth for protocol methods**: MCP handshake methods (`initialize`, `tools/list`) no longer require authentication, enabling platform health checks and capability discovery without credentials.
 
 ### 2. Configure Environment
