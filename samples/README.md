@@ -243,14 +243,9 @@ async with MCPStreamableHTTPTool(...) as mcp_tool:
    - `terminate_on_close=True` (default) means the tool closes the httpx client
    - Don't wrap `AsyncClient` in its own context manager when passing to MCP tool
 
-5. **Tool Filtering for Safety**
-   - Use `allowed_tools=["get-schema", "read-cypher"]` to restrict available tools
-   - For databases, consider restricting to read-only tools in production
-
-The Neo4j MCP server provides three tools:
-- `get-schema`: Retrieve the database schema
-- `read-cypher`: Execute read-only Cypher queries
-- `write-cypher`: Execute write Cypher queries (restricted in mcp_tools sample)
+5. **Read-Only Mode**
+   - The deployment uses `NEO4J_READ_ONLY=true` to disable write operations at the server level
+   - Available tools: `get-schema`, `read-cypher`
 
 See [`sample-maf-agent/src/samples/mcp_tools/main.py`](sample-maf-agent/src/samples/mcp_tools/main.py) for a complete implementation example.
 

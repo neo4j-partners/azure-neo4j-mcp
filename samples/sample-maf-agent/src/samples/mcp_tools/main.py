@@ -169,24 +169,19 @@ async def demo_mcp_tools() -> None:
         #    - Pass authentication via headers on the client
         #    - Don't use async context manager for the client (see above)
         #
-        # 2. allowed_tools: List of tool names to expose to the agent
-        #    - BEST PRACTICE: Restrict to read-only tools for safety
-        #    - Example: ["get-schema", "read-cypher"] excludes write-cypher
-        #    - If None (default), all tools from the server are available
-        #
-        # 3. load_prompts: Whether to load MCP prompts from the server
+        # 2. load_prompts: Whether to load MCP prompts from the server
         #    - IMPORTANT: Set to False if the server doesn't support prompts
         #    - The Neo4j MCP server only provides tools, not prompts
         #    - Leaving this True causes "prompts not supported" error
         #
-        # 4. load_tools: Whether to load MCP tools (default: True)
+        # 3. load_tools: Whether to load MCP tools (default: True)
         #    - Usually left as True unless you only want prompts
         #
-        # 5. terminate_on_close: Close httpx client when MCP tool closes
+        # 4. terminate_on_close: Close httpx client when MCP tool closes
         #    - Default: True (recommended)
         #    - Set to False only if you manage the client lifecycle yourself
         #
-        # 6. request_timeout: Timeout in seconds for MCP requests
+        # 5. request_timeout: Timeout in seconds for MCP requests
         #    - Useful for long-running database queries
         #
         # Reference: agent-framework/python/packages/core/agent_framework/_mcp.py
@@ -195,7 +190,6 @@ async def demo_mcp_tools() -> None:
             name="Neo4j MCP Server",
             url=mcp_config["endpoint"],
             http_client=http_client,
-            allowed_tools=["get-schema", "read-cypher"],  # Read-only for safety
             load_prompts=False,  # Neo4j MCP server doesn't support prompts
         )
 

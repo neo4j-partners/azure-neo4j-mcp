@@ -154,8 +154,7 @@ After deployment, `MCP_ACCESS.json` contains everything needed to connect:
 ```json
 {
   "endpoint": "https://neo4j-mcp-server.azurecontainerapps.io",
-  "api_key": "<your-api-key>",
-  "tools": ["get-schema", "read-cypher", "write-cypher"]
+  "api_key": "<your-api-key>"
 }
 ```
 
@@ -245,8 +244,7 @@ azure-neo4j-mcp/
 |------|-------------|
 | `get-schema` | Retrieve database schema (labels, relationships, properties) |
 | `read-cypher` | Execute read-only Cypher queries |
-| `write-cypher` | Execute write Cypher queries (if enabled) |
-| `list-gds-procedures` | List Graph Data Science procedures |
+| `list-gds-procedures` | List Graph Data Science procedures (if GDS installed) |
 
 ## Cost Estimate
 

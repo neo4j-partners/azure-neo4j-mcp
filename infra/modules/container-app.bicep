@@ -218,6 +218,11 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
               name: 'NEO4J_LOG_LEVEL'
               value: 'info'
             }
+            // Read-only mode - disables write-cypher tool at server level
+            {
+              name: 'NEO4J_READ_ONLY'
+              value: 'true'
+            }
           ]
           // TCP probe for MCP server (no HTTP health endpoint available)
           probes: [

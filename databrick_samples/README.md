@@ -130,15 +130,14 @@ The notebook creates an HTTP connection, but you must manually enable MCP functi
 
 ### Security
 
-This integration provides **read-only access** to Neo4j. The `write-cypher` tool is intentionally excluded to prevent accidental data modifications from analytics workflows.
+This integration provides **read-only access** to Neo4j. The MCP server is deployed with `NEO4J_READ_ONLY=true`, which disables the `write-cypher` tool at the server level.
 
 ### Available MCP Tools
 
-| Tool | Description | Available |
-|------|-------------|-----------|
-| `get-schema` | Retrieve database schema | Yes |
-| `read-cypher` | Execute read-only Cypher queries | Yes |
-| `write-cypher` | Execute write Cypher queries | No (excluded) |
+| Tool | Description |
+|------|-------------|
+| `get-schema` | Retrieve database schema |
+| `read-cypher` | Execute read-only Cypher queries |
 
 ### Example Usage
 

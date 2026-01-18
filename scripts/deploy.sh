@@ -701,11 +701,6 @@ generate_mcp_access() {
     "prefix": "Bearer",
     "alternative_header": "X-API-Key"
   },
-  "tools": [
-    "get-schema",
-    "read-cypher",
-    "write-cypher"
-  ],
   "example_curl": "curl -X POST 'https://${app_url}/mcp' -H 'Authorization: Bearer YOUR_API_KEY' -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}'",
   "mcp_client_config": {
     "mcpServers": {
