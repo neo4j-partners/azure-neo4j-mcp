@@ -1,6 +1,25 @@
 # Neo4j MCP Server on Azure Container Apps
 
-Deploy the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Container Apps, enabling AI agents to query Neo4j graph databases using the Model Context Protocol (MCP).
+## Overview
+
+This project deploys the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Container Apps, allowing AI agents to query Neo4j graph databases through the Model Context Protocol (MCP).
+
+### What is MCP?
+
+The Model Context Protocol is an open standard that lets AI assistants like Claude, ChatGPT, and custom agents connect to external data sources and tools. Instead of embedding database logic directly into your AI application, MCP provides a clean interface where the AI can discover available tools and call them as needed.
+
+### What does this deployment provide?
+
+This deployment creates a secure, production-ready MCP server in Azure that:
+
+- Connects to your Neo4j database (such as Neo4j Aura or a self-hosted instance)
+- Exposes read-only tools for schema discovery and Cypher query execution
+- Protects access with API key authentication and rate limiting
+- Runs as a serverless container with automatic scaling and built-in monitoring
+
+### Why Azure Container Apps?
+
+Azure Container Apps provides a fully managed environment for running containers without managing infrastructure. This deployment uses Container Apps because it offers HTTPS by default, integrates with Azure Key Vault for secrets, and scales to zero when not in use to minimize costs.
 
 ## Architecture
 
@@ -47,6 +66,12 @@ Deploy the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Co
                                    └─────────────┘
 ```
 
+### How it works
+
+When an AI agent needs to query your Neo4j database, it sends a request to the MCP server endpoint with an API key. The request first passes through an authentication proxy that validates the API key and applies rate limiting. If the key is valid, the proxy forwards the request to the MCP server running alongside it. The MCP server then translates the request into a Cypher query, executes it against your Neo4j database, and returns the results back to the agent.
+
+The server runs in read-only mode by default, meaning agents can explore the database schema and run queries, but cannot modify data. This is a safety measure to prevent accidental changes from AI-generated queries.
+
 ### Container Architecture
 
 The Container App runs two containers as sidecars:
@@ -67,19 +92,13 @@ The Container App runs two containers as sidecars:
 
 ### Authentication Flow
 
-```
-┌──────────┐      API Key       ┌────────────┐                    ┌────────────┐     Cypher      ┌───────────┐
-│ AI Agent │ ─────────────────► │ Auth Proxy │ ─────────────────► │ MCP Server │ ──────────────► │  Neo4j    │
-│          │   Bearer Token     │  (Nginx)   │                    │ (has creds │   bolt+s://     │  Database │
-└──────────┘                    └────────────┘                    │ from startup)               └───────────┘
-                                                                  └────────────┘
-```
+The deployment uses a two-layer authentication approach:
 
-1. Client sends request with `Authorization: Bearer <API_KEY>` or `X-API-Key: <API_KEY>`
-2. Auth proxy validates the API key against Key Vault secret
-3. If valid, proxy forwards the request to MCP server
-4. MCP server processes the request using Neo4j credentials received at startup
-5. Response flows back through the proxy to the client
+1. **Client to MCP Server**: AI agents authenticate using an API key sent in the request header. The authentication proxy validates this key before allowing the request through.
+
+2. **MCP Server to Neo4j**: The MCP server connects to Neo4j using credentials stored securely in Azure Key Vault. These credentials are loaded when the container starts, not passed with each request.
+
+This separation means you can rotate the MCP API key independently of your Neo4j credentials, and the Neo4j credentials are never exposed to client applications.
 
 ## Quick Start
 
