@@ -40,14 +40,6 @@ Go to the **Libraries** tab on your cluster and install these packages from PyPI
 
 **Tip:** Check [PyPI](https://pypi.org/) for the latest compatible versions if you encounter dependency conflicts.
 
-### 3. Optional: Maven Libraries
-
-For direct Spark-Neo4j integration (not required for MCP):
-
-| Library | Coordinates |
-|---------|-------------|
-| Neo4j Spark Connector | `org.neo4j:neo4j-connector-apache-spark_2.13:5.3.10` |
-
 ## Files
 
 | File | Description |
@@ -55,7 +47,6 @@ For direct Spark-Neo4j integration (not required for MCP):
 | [neo4j-mcp-http-connection.ipynb](./neo4j-mcp-http-connection.ipynb) | Setup and test an HTTP connection to query Neo4j via MCP |
 | [neo4j_mcp_agent.py](./neo4j_mcp_agent.py) | LangGraph agent that connects to Neo4j via external MCP HTTP connection |
 | [neo4j-mcp-agent-deploy.ipynb](./neo4j-mcp-agent-deploy.ipynb) | Test, evaluate, and deploy the Neo4j MCP agent |
-| [langgraph-mcp-tool-calling-agent.ipynb](./langgraph-mcp-tool-calling-agent.ipynb) | Reference: LangGraph agent with MCP tool calling (Databricks template) |
 
 ## Neo4j MCP HTTP Connection
 
@@ -203,13 +194,24 @@ The `neo4j_mcp_agent.py` and `neo4j-mcp-agent-deploy.ipynb` files provide a comp
 
 ### Usage
 
-**Step 1: Create the HTTP Connection**
+**Step 1: Create Unity Catalog Resources**
 
-First, run `neo4j-mcp-http-connection.ipynb` to create the `neo4j_azure_beta_mcp` connection.
+The agent is registered to Unity Catalog for governance. Create the catalog and schema if they don't exist:
+
+Via Databricks UI:
+1. Navigate to **Catalog** in the sidebar
+2. Click **Create catalog** and enter `mcp_demo_catalog`
+3. Click the catalog, then **Create schema** and enter `agents`
+
+The model will be registered as: `mcp_demo_catalog.agents.neo4j_mcp_agent`
 
 **Step 2: Deploy the Agent**
 
-Import both files into your Databricks workspace, then run `neo4j-mcp-agent-deploy.ipynb`:
+Import these files into your Databricks workspace:
+- `neo4j_mcp_agent.py` - The agent code
+- `neo4j-mcp-agent-deploy.ipynb` - The deployment notebook
+
+Then run `neo4j-mcp-agent-deploy.ipynb`:
 
 1. **Test the agent** - Verify it can query Neo4j
 2. **Log as MLflow model** - Package for deployment
@@ -227,15 +229,6 @@ Edit `neo4j_mcp_agent.py` to customize:
 | `CONNECTION_NAME` | HTTP connection name | `neo4j_azure_beta_mcp` |
 | `SECRET_SCOPE` | Secrets scope name | `mcp-neo4j-secrets` |
 | `system_prompt` | Agent instructions | Neo4j query assistant |
-
-## LangGraph MCP Tool-Calling Agent (Reference)
-
-The `langgraph-mcp-tool-calling-agent.ipynb` notebook is a Databricks reference template that demonstrates how to build a LangGraph agent that connects to MCP servers. It was used as the basis for `neo4j_mcp_agent.py`.
-
-See the notebook for details on:
-- Connecting to Databricks MCP servers
-- Building custom agent workflows
-- Deploying agents to model serving endpoints
 
 ## Related Documentation
 
