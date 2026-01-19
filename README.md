@@ -100,6 +100,19 @@ The deployment uses a two-layer authentication approach:
 
 This separation means you can rotate the MCP API key independently of your Neo4j credentials, and the Neo4j credentials are never exposed to client applications.
 
+## Databricks Integration
+
+This repository includes samples for using the MCP server with Databricks, enabling AI agents and SQL queries to access Neo4j graph data.
+
+### What's Included
+
+| Resource | Description |
+|----------|-------------|
+| `scripts/setup_databricks_secrets.sh` | Stores MCP credentials in Databricks secrets from `MCP_ACCESS.json` |
+| `databrick_samples/neo4j-mcp-http-connection.ipynb` | Creates a Unity Catalog HTTP connection to the MCP server |
+| `databrick_samples/neo4j_mcp_agent.py` | LangGraph agent that queries Neo4j via the HTTP connection |
+| `databrick_samples/neo4j-mcp-agent-deploy.ipynb` | Tests, evaluates, and deploys the agent to a serving endpoint |
+
 ## Quick Start
 
 ### Prerequisites
@@ -185,6 +198,19 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
   -H "Content-Type: application/json" \
   -d '{"name": "get-schema", "arguments": {}}'
 ```
+
+
+### 7 - Databricks Setup
+
+After deploying the MCP server:
+
+```bash
+# Store MCP credentials in Databricks secrets
+./scripts/setup_databricks_secrets.sh
+```
+
+Then import the notebooks into Databricks and follow the instructions in [databrick_samples/README.md](./databrick_samples/README.md).
+
 
 ## Commands
 
