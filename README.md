@@ -104,6 +104,29 @@ This separation means you can rotate the MCP API key independently of your Neo4j
 
 This repository includes samples for using the MCP server with Databricks, enabling AI agents and SQL queries to access Neo4j graph data.
 
+### Why Azure Container Apps Instead of Databricks Apps?
+
+The Neo4j MCP server is written in **Go** and runs as a **Docker container**. Databricks Apps only supports:
+
+- **Python** frameworks (Streamlit, Dash, Gradio)
+- **Node.js** frameworks (React, Angular, Express)
+
+Databricks Apps does not support:
+- Custom Docker containers
+- Go binaries or other compiled languages
+- Native executables or custom runtimes
+
+Because of these limitations, the Neo4j MCP server must be hosted externally. Azure Container Apps provides a fully managed environment for running the Go-based MCP server with HTTPS, auto-scaling, and Key Vault integration.
+
+Databricks then connects to this external MCP server through a **Unity Catalog HTTP connection**, which acts as a secure proxy. This architecture provides:
+
+- **Centralized credential management** - Bearer tokens stored in Databricks secrets
+- **Governance and auditing** - All access controlled through Unity Catalog
+- **Unified interface** - External servers behave identically to Databricks-managed MCP servers
+- **Automatic token management** - Databricks handles OAuth flows and token refresh
+
+For implementation details, see [databrick_samples/README.md](./databrick_samples/README.md) and [Databricks External MCP documentation](https://docs.databricks.com/aws/en/generative-ai/mcp/external-mcp).
+
 ### What's Included
 
 | Resource | Description |

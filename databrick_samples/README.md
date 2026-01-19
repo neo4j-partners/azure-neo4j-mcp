@@ -6,7 +6,60 @@ Sample notebooks for integrating Neo4j MCP Server with Databricks.
 
 This sample demonstrates how to connect Databricks to a Neo4j graph database through the Model Context Protocol (MCP). Instead of connecting directly to Neo4j, Databricks uses a Unity Catalog HTTP connection that acts as a secure proxy to an external MCP server.
 
-Here's how it works:
+## Why External Hosting? Databricks Apps Limitations
+
+The official [Neo4j MCP server](https://github.com/neo4j/mcp) is a **Go application** that runs as a compiled binary or Docker container. This creates a fundamental incompatibility with Databricks Apps.
+
+### Databricks Apps Runtime Constraints
+
+Databricks Apps is a serverless platform with strict runtime limitations:
+
+| Supported | Not Supported |
+|-----------|---------------|
+| Python (Streamlit, Dash, Gradio) | Go binaries |
+| Node.js (React, Angular, Express) | Docker containers |
+| `requirements.txt` / `package.json` dependencies | Custom runtimes |
+| Pre-configured system environment | Native executables |
+
+**Key limitations:**
+- Apps run in a **managed Python/Node.js environment** - you cannot bring your own container image
+- **No support for compiled languages** like Go, Rust, or C++
+- App files cannot exceed **10 MB** (the Neo4j MCP server binary is larger)
+- Apps can only use **existing resources** - they cannot create new infrastructure
+
+### The Solution: External MCP Server with HTTP Proxy
+
+Because Databricks Apps cannot run the Go-based Neo4j MCP server, we deploy it to **Azure Container Apps** and connect through Databricks' **external MCP server** integration:
+
+```
+┌─────────────────────────────────────┐      ┌──────────────────────────────────┐
+│         DATABRICKS                  │      │         AZURE                    │
+│                                     │      │                                  │
+│   ┌─────────────────────────────┐   │      │   ┌──────────────────────────┐   │
+│   │  Unity Catalog              │   │      │   │  Azure Container Apps    │   │
+│   │  HTTP Connection            │───┼──────┼──▶│  Neo4j MCP Server (Go)   │   │
+│   │  (MCP-enabled)              │   │      │   │  + Auth Proxy            │   │
+│   └─────────────────────────────┘   │      │   └──────────────────────────┘   │
+│              ▲                      │      │              │                   │
+│              │                      │      │              ▼                   │
+│   ┌──────────┴──────────────────┐   │      │   ┌──────────────────────────┐   │
+│   │  Notebooks / Agents         │   │      │   │  Neo4j Aura              │   │
+│   │  (Python, SQL)              │   │      │   │  Graph Database          │   │
+│   └─────────────────────────────┘   │      │   └──────────────────────────┘   │
+└─────────────────────────────────────┘      └──────────────────────────────────┘
+```
+
+This pattern is Databricks' recommended approach for integrating MCP servers that cannot run natively in Databricks Apps.
+
+### References
+
+- [Databricks Apps Documentation](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/) - Supported frameworks and limitations
+- [External MCP Servers](https://docs.databricks.com/aws/en/generative-ai/mcp/external-mcp) - How to connect to external MCP servers
+- [Unity Catalog HTTP Connections](https://docs.databricks.com/aws/en/query-federation/http) - Creating HTTP connections
+
+## How It Works
+
+Here's the detailed request flow:
 
 1. **MCP Server Deployment**: The Neo4j MCP server runs on Azure Container Apps, providing a JSON-RPC API that translates MCP tool calls into Cypher queries against Neo4j.
 
@@ -21,6 +74,7 @@ This architecture provides several benefits:
 - **Governance and auditing** through Unity Catalog
 - **Network isolation** - the MCP server can be locked down to only accept requests from Databricks
 - **Consistent interface** - notebooks and agents use the same MCP protocol
+- **Automatic token management** - Databricks handles OAuth flows and token refresh automatically
 
 ## Architecture
 
