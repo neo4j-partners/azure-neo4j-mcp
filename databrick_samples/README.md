@@ -2,6 +2,106 @@
 
 Sample notebooks for integrating Neo4j MCP Server with Databricks.
 
+## Overview
+
+This sample demonstrates how to connect Databricks to a Neo4j graph database through the Model Context Protocol (MCP). Instead of connecting directly to Neo4j, Databricks uses a Unity Catalog HTTP connection that acts as a secure proxy to an external MCP server.
+
+Here's how it works:
+
+1. **MCP Server Deployment**: The Neo4j MCP server runs on Azure Container Apps, providing a JSON-RPC API that translates MCP tool calls into Cypher queries against Neo4j.
+
+2. **Unity Catalog HTTP Connection**: Databricks creates an HTTP connection in Unity Catalog that stores the MCP server endpoint URL and authentication credentials (bearer token). This connection is marked as an "MCP connection" to enable special MCP functionality.
+
+3. **Secure Proxy**: When notebooks or SQL queries call the MCP tools, Databricks routes requests through its internal proxy (`/api/2.0/mcp/external/{connection_name}`). This proxy adds authentication headers and forwards requests to the external MCP server.
+
+4. **Tool Execution**: The MCP server receives JSON-RPC requests, executes the requested tool (like `get-schema` or `read-cypher`), runs the corresponding Cypher query against Neo4j, and returns results through the same path.
+
+This architecture provides several benefits:
+- **Centralized credential management** via Databricks secrets
+- **Governance and auditing** through Unity Catalog
+- **Network isolation** - the MCP server can be locked down to only accept requests from Databricks
+- **Consistent interface** - notebooks and agents use the same MCP protocol
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    DATABRICKS WORKSPACE                                  │
+│                                                                                          │
+│  ┌──────────────────┐      ┌─────────────────────────────────────────────────────────┐  │
+│  │                  │      │                   UNITY CATALOG                          │  │
+│  │   Notebooks /    │      │  ┌─────────────────┐    ┌────────────────────────────┐  │  │
+│  │   SQL Queries    │─────▶│  │  HTTP Connection │    │  Secrets Scope             │  │  │
+│  │                  │      │  │  (neo4j_mcp)     │◀───│  - mcp_endpoint            │  │  │
+│  │  http_request()  │      │  │                  │    │  - mcp_api_key             │  │  │
+│  │  or LangGraph    │      │  │  Is MCP: ✓       │    └────────────────────────────┘  │  │
+│  │                  │      │  └────────┬────────┘                                     │  │
+│  └──────────────────┘      │           │                                              │  │
+│                            └───────────┼──────────────────────────────────────────────┘  │
+│                                        │                                                 │
+│  ┌─────────────────────────────────────┼─────────────────────────────────────────────┐  │
+│  │                    DATABRICKS HTTP PROXY                                           │  │
+│  │                    /api/2.0/mcp/external/{connection_name}                         │  │
+│  │                                                                                    │  │
+│  │    Adds Bearer Token ──▶  Forwards JSON-RPC  ──▶  Returns MCP Response            │  │
+│  └─────────────────────────────────────┬─────────────────────────────────────────────┘  │
+│                                        │                                                 │
+└────────────────────────────────────────┼─────────────────────────────────────────────────┘
+                                         │
+                                         │ HTTPS (Bearer Token Auth)
+                                         │ JSON-RPC 2.0 over HTTP
+                                         ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              AZURE CONTAINER APPS                                        │
+│                                                                                          │
+│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                           NEO4J MCP SERVER                                         │  │
+│  │                                                                                    │  │
+│  │   Endpoints:                    Tools:                                             │  │
+│  │   - POST /mcp (JSON-RPC)        - get-schema: Returns node labels, relationships  │  │
+│  │   - GET /health                 - read-cypher: Executes read-only Cypher queries  │  │
+│  │                                                                                    │  │
+│  │   Config: NEO4J_READ_ONLY=true (write-cypher disabled)                            │  │
+│  └───────────────────────────────────────────────────────────────────────────────────┘  │
+│                                        │                                                 │
+└────────────────────────────────────────┼─────────────────────────────────────────────────┘
+                                         │
+                                         │ Bolt Protocol (neo4j+s://)
+                                         ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              NEO4J AURA / SELF-HOSTED                                    │
+│                                                                                          │
+│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                           GRAPH DATABASE                                           │  │
+│  │                                                                                    │  │
+│  │   (Nodes)──[:RELATIONSHIPS]──▶(Nodes)                                             │  │
+│  │                                                                                    │  │
+│  └───────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                          │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Request Flow
+
+```
+1. Notebook calls http_request() or agent invokes MCP tool
+                    │
+                    ▼
+2. Unity Catalog resolves connection settings
+                    │
+                    ▼
+3. Databricks proxy adds Bearer token, forwards to MCP server
+                    │
+                    ▼
+4. MCP server parses JSON-RPC, extracts tool name and arguments
+                    │
+                    ▼
+5. Tool handler builds Cypher query, executes against Neo4j
+                    │
+                    ▼
+6. Results returned as JSON-RPC response through proxy to notebook
+```
+
 ## Cluster Setup
 
 Before running these notebooks, configure your Databricks cluster with the required libraries.
@@ -242,6 +342,7 @@ Edit `neo4j_mcp_agent.py` to customize:
 
 ## Related Documentation
 
+- [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) - Comprehensive architecture documentation with Mermaid diagrams
 - [HTTP.md](../HTTP.md) - Full proposal and implementation details for HTTP connection
 - [Databricks HTTP Connections](https://docs.databricks.com/aws/en/query-federation/http)
 - [Databricks External MCP](https://docs.databricks.com/aws/en/generative-ai/mcp/external-mcp)
