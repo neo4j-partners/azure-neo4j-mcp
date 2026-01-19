@@ -200,7 +200,7 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 ```
 
 
-### 7 - Databricks Setup
+### 7. Databricks Setup
 
 After deploying the MCP server:
 
