@@ -378,8 +378,8 @@ graph TB
         N4J["Neo4j"]
     end
 
-    NB -->|http_request()| CONN
-    AGENT -->|MCP tool call| CONN
+    NB -->|"http_request()"| CONN
+    AGENT -->|"MCP tool call"| CONN
     CONN -->|credentials| SECRETS
     CONN --> API
     API -->|HTTPS + Bearer| MCP
@@ -396,7 +396,7 @@ sequenceDiagram
     participant MCP as Neo4j MCP Server
     participant Neo4j
 
-    Notebook->>UC: http_request(conn='neo4j_mcp', ...)
+    Notebook->>UC: http_request conn=neo4j_mcp
     UC->>UC: Resolve connection settings
     UC->>UC: Retrieve Bearer token from secrets
     UC->>Proxy: Forward request
