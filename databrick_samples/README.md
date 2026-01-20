@@ -6,7 +6,7 @@ Sample notebooks for integrating Neo4j MCP Server with Databricks.
 
 This sample demonstrates how to connect Databricks to a Neo4j graph database through the Model Context Protocol (MCP). Instead of connecting directly to Neo4j, Databricks uses a Unity Catalog HTTP connection that acts as a secure proxy to an external MCP server.
 
-## Why External Hosting? Databricks Apps Limitations
+## External Hosting and the Databricks Apps Limitations
 
 The official [Neo4j MCP server](https://github.com/neo4j/mcp) is a **Go application** that runs as a compiled binary or Docker container. This creates a fundamental incompatibility with Databricks Apps.
 

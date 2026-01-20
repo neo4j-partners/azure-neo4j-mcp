@@ -4,11 +4,11 @@
 
 This project deploys the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Container Apps, allowing AI agents to query Neo4j graph databases through the Model Context Protocol (MCP).
 
-### What is MCP?
+### Overview of Model Context Protocol
 
 The Model Context Protocol is an open standard that lets AI assistants like Claude, ChatGPT, and custom agents connect to external data sources and tools. Instead of embedding database logic directly into your AI application, MCP provides a clean interface where the AI can discover available tools and call them as needed.
 
-### What does this deployment provide?
+### Overview of this Deployment of the MCP Server
 
 This deployment creates a secure, production-ready MCP server in Azure that:
 
@@ -17,7 +17,7 @@ This deployment creates a secure, production-ready MCP server in Azure that:
 - Protects access with API key authentication and rate limiting
 - Runs as a serverless container with automatic scaling and built-in monitoring
 
-### Why Azure Container Apps?
+### Hosting the MCP Server in Azure Container
 
 Azure Container Apps provides a fully managed environment for running containers without managing infrastructure. This deployment uses Container Apps because it offers HTTPS by default, integrates with Azure Key Vault for secrets, and scales to zero when not in use to minimize costs.
 
@@ -104,7 +104,7 @@ This separation means you can rotate the MCP API key independently of your Neo4j
 
 This repository includes samples for using the MCP server with Databricks, enabling AI agents and SQL queries to access Neo4j graph data.
 
-### Why Azure Container Apps Instead of Databricks Apps?
+### External Hosting Requirement of the MCP Server
 
 The Neo4j MCP server is written in **Go** and runs as a **Docker container**. Databricks Apps only supports:
 
@@ -157,7 +157,7 @@ cd azure-neo4j-mcp
 git clone -b feat/http-env-credentials https://github.com/neo4j-partners/mcp.git ../mcp
 ```
 
-**Why the fork?** The [neo4j-partners/mcp](https://github.com/neo4j-partners/mcp) fork on the `feat/http-env-credentials` branch adds features required for Azure Container Apps deployment:
+**The Neo4j MCP Server Fork** The [neo4j-partners/mcp](https://github.com/neo4j-partners/mcp) fork on the `feat/http-env-credentials` branch adds features required for Azure Container Apps deployment:
 
 - **Environment variable authentication**: When running in HTTP streaming mode, the server uses `NEO4J_USERNAME` and `NEO4J_PASSWORD` environment variables to connect to Neo4j at startup. This enables fail-fast behavior where credential issues are detected immediately rather than on first request.
 - **Relaxed auth for protocol methods**: MCP handshake methods (`initialize`, `tools/list`) no longer require authentication, enabling platform health checks and capability discovery without credentials.
