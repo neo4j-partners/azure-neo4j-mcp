@@ -5,7 +5,7 @@ This agent connects to a Neo4j MCP server deployed on Azure Container Apps
 via a Databricks Unity Catalog HTTP connection with bearer token authentication.
 
 The connection is created in neo4j-mcp-http-connection.ipynb and uses secrets
-configured by scripts/setup_databricks_secrets.sh.
+configured by scripts/setup-databricks-secrets.sh.
 
 Features:
 - Connects to external Neo4j MCP server via Unity Catalog HTTP connection proxy
@@ -15,7 +15,7 @@ Features:
 
 Prerequisites:
 - HTTP connection created: neo4j_azure_beta_mcp (see neo4j-mcp-http-connection.ipynb)
-- Secrets configured in scope: mcp-neo4j-secrets (see setup_databricks_secrets.sh)
+- Secrets configured in scope: mcp-neo4j-secrets (see setup-databricks-secrets.sh)
 - "Is MCP connection" checkbox enabled in Catalog Explorer
 """
 
@@ -63,7 +63,7 @@ llm = ChatDatabricks(endpoint=LLM_ENDPOINT_NAME)
 CONNECTION_NAME = "neo4j_azure_beta_mcp"
 
 # Databricks secrets scope for MCP credentials
-# Configured by scripts/setup_databricks_secrets.sh
+# Configured by scripts/setup-databricks-secrets.sh
 SECRET_SCOPE = "mcp-neo4j-secrets"
 
 # System prompt for the Neo4j graph assistant

@@ -246,7 +246,7 @@ From your local machine (where `MCP_ACCESS.json` exists):
 
 ```bash
 # Run the setup script
-./scripts/setup_databricks_secrets.sh
+./scripts/setup-databricks-secrets.sh
 ```
 
 This reads the MCP server credentials from `MCP_ACCESS.json` and stores them securely in Databricks secrets.
@@ -317,7 +317,7 @@ spark.sql("""
 
 | Issue | Solution |
 |-------|----------|
-| Secret not found | Run `./scripts/setup_databricks_secrets.sh` |
+| Secret not found | Run `./scripts/setup-databricks-secrets.sh` |
 | Connection already exists | Drop it with `DROP CONNECTION IF EXISTS neo4j_mcp` |
 | HTTP timeout | Verify MCP server is running |
 | 401 Unauthorized | Re-run setup script to refresh API key |

@@ -131,7 +131,7 @@ For implementation details, see [databrick_samples/README.md](./databrick_sample
 
 | Resource | Description |
 |----------|-------------|
-| `scripts/setup_databricks_secrets.sh` | Stores MCP credentials in Databricks secrets from `MCP_ACCESS.json` |
+| `scripts/setup-databricks-secrets.sh` | Stores MCP credentials in Databricks secrets from `MCP_ACCESS.json` |
 | `databrick_samples/neo4j-mcp-http-connection.ipynb` | Creates a Unity Catalog HTTP connection to the MCP server |
 | `databrick_samples/neo4j_mcp_agent.py` | LangGraph agent that queries Neo4j via the HTTP connection |
 | `databrick_samples/neo4j-mcp-agent-deploy.ipynb` | Tests, evaluates, and deploys the agent to a serving endpoint |
@@ -229,7 +229,7 @@ After deploying the MCP server:
 
 ```bash
 # Store MCP credentials in Databricks secrets
-./scripts/setup_databricks_secrets.sh
+./scripts/setup-databricks-secrets.sh
 ```
 
 Then import the notebooks into Databricks and follow the instructions in [databrick_samples/README.md](./databrick_samples/README.md).
