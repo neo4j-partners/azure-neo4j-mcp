@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "requests",
+#     "msal",
+#     "python-dotenv",
+# ]
+# ///
 """
 Bearer Token MCP Client - Test Script
 
@@ -6,19 +14,32 @@ This script demonstrates how to authenticate with an identity provider and
 call the Neo4j MCP server using bearer token authentication.
 
 Usage:
-    # Set environment variables
-    export MCP_ENDPOINT="https://your-mcp-server.azurecontainerapps.io"
+    # Option 1: Configure via .env file in parent directory
+    # Copy bearer-mcp-server/.env.sample to bearer-mcp-server/.env
+    # Then run from bearer-mcp-server/client/ directory:
+    python test_bearer_client.py
 
-    # For Azure Entra ID:
+    # Option 2: Set environment variables directly
+    export MCP_ENDPOINT="https://your-mcp-server.azurecontainerapps.io"
     export AZURE_TENANT_ID="your-tenant-id"
     export AZURE_CLIENT_ID="your-client-id"
     export AZURE_CLIENT_SECRET="your-client-secret"
-
-    # Run tests
+    # Optional: custom audience (default: api://{client_id})
+    export AZURE_AUDIENCE="api://neo4j-m2m"
     python test_bearer_client.py
 
-Requirements:
-    pip install msal requests
+    # Option 3: Use a pre-acquired token
+    export MCP_ENDPOINT="https://your-mcp-server.azurecontainerapps.io"
+    export MCP_BEARER_TOKEN="eyJ..."
+    python test_bearer_client.py
+
+For azure-ee-template users:
+    Configuration values can be found in:
+    - deployments/.arm-testing/results/connection-*.json (endpoint info)
+    - deployments/.arm-testing/config/settings.yaml (M2M config)
+
+Run with uv (dependencies are declared inline via PEP 723):
+    uv run test_bearer_client.py
 """
 
 import json
@@ -117,7 +138,7 @@ class MCPBearerClient:
         return self.call_tool("read-cypher", {"query": query})
 
 
-def get_azure_token(tenant_id: str, client_id: str, client_secret: str) -> str:
+def get_azure_token(tenant_id: str, client_id: str, client_secret: str, audience: Optional[str] = None) -> str:
     """
     Obtain a token from Azure Entra ID.
 
@@ -125,6 +146,7 @@ def get_azure_token(tenant_id: str, client_id: str, client_secret: str) -> str:
         tenant_id: Azure AD tenant ID
         client_id: Application (client) ID
         client_secret: Client secret
+        audience: Optional audience/resource (default: api://{client_id})
 
     Returns:
         Access token string
@@ -138,10 +160,14 @@ def get_azure_token(tenant_id: str, client_id: str, client_secret: str) -> str:
         client_credential=client_secret
     )
 
+    # Use custom audience if provided, otherwise default to api://{client_id}
+    scope_base = audience if audience else f"api://{client_id}"
+    scopes = [f"{scope_base}/.default"]
+
+    print(f"Requesting token with scope: {scopes[0]}")
+
     # Acquire token for the application itself
-    result = app.acquire_token_for_client(
-        scopes=[f"api://{client_id}/.default"]
-    )
+    result = app.acquire_token_for_client(scopes=scopes)
 
     if "access_token" not in result:
         error = result.get("error_description", result.get("error", "Unknown error"))
@@ -150,26 +176,59 @@ def get_azure_token(tenant_id: str, client_id: str, client_secret: str) -> str:
     return result["access_token"]
 
 
+def load_dotenv_from_parent():
+    """Load .env file from parent directory if it exists."""
+    try:
+        from dotenv import load_dotenv
+        # Try parent directory first (bearer-mcp-server/.env)
+        parent_env = os.path.join(os.path.dirname(__file__), '..', '.env')
+        if os.path.exists(parent_env):
+            load_dotenv(parent_env)
+            print(f"Loaded environment from {os.path.abspath(parent_env)}")
+            return True
+        # Try current directory
+        if os.path.exists('.env'):
+            load_dotenv('.env')
+            print("Loaded environment from .env")
+            return True
+    except ImportError:
+        pass  # python-dotenv not installed
+    return False
+
+
 def get_token_from_env() -> str:
     """Get token from environment, either directly or via Azure."""
+    # Try to load .env file
+    load_dotenv_from_parent()
+
     # Check for direct token
     token = os.environ.get("MCP_BEARER_TOKEN")
     if token:
+        print("Using MCP_BEARER_TOKEN from environment")
         return token
 
     # Check for Azure credentials
     tenant_id = os.environ.get("AZURE_TENANT_ID")
     client_id = os.environ.get("AZURE_CLIENT_ID")
     client_secret = os.environ.get("AZURE_CLIENT_SECRET")
+    audience = os.environ.get("AZURE_AUDIENCE")  # Optional custom audience
 
     if tenant_id and client_id and client_secret:
         print("Acquiring token from Azure Entra ID...")
-        return get_azure_token(tenant_id, client_id, client_secret)
+        print(f"  Tenant: {tenant_id}")
+        print(f"  Client: {client_id}")
+        if audience:
+            print(f"  Audience: {audience}")
+        return get_azure_token(tenant_id, client_id, client_secret, audience)
 
     raise ValueError(
         "No authentication configured. Set either:\n"
         "  - MCP_BEARER_TOKEN: Direct bearer token\n"
-        "  - AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET: Azure Entra ID credentials"
+        "  - AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET: Azure Entra ID credentials\n"
+        "  - AZURE_AUDIENCE (optional): Custom audience (default: api://{client_id})\n"
+        "\n"
+        "For azure-ee-template users, find these values in:\n"
+        "  - deployments/.arm-testing/config/settings.yaml (M2M config)"
     )
 
 

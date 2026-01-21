@@ -74,6 +74,9 @@ param readOnlyMode bool = true
 @description('Allowed CORS origins (comma-separated, or * for all)')
 param allowedOrigins string = ''
 
+@description('Deploy container app (set to false for foundation-only deployment)')
+param deployContainerApp bool = true
+
 // =============================================================================
 // Variables
 // =============================================================================
@@ -188,7 +191,8 @@ module containerEnvironment 'modules/container-environment.bicep' = {
 // Container App - Neo4j MCP Server with Bearer Token Authentication
 // Single container deployment - no Nginx proxy needed
 // Authentication handled by MCP server passing tokens to Neo4j
-module containerApp 'modules/container-app.bicep' = {
+// Conditional: only deploy when image is available (deployContainerApp=true)
+module containerApp 'modules/container-app.bicep' = if (deployContainerApp) {
   name: 'deploy-container-app'
   params: {
     name: containerAppName
@@ -248,18 +252,21 @@ output containerEnvironmentId string = containerEnvironment.outputs.id
 @description('Container Apps Environment default domain')
 output containerEnvironmentDefaultDomain string = containerEnvironment.outputs.defaultDomain
 
-// Phase 4 Outputs
+// Phase 4 Outputs (conditional - only when container app is deployed)
 @description('Container App name')
-output containerAppName string = containerApp.outputs.name
+output containerAppName string = deployContainerApp ? containerApp.outputs.name : ''
 
 @description('Container App FQDN')
-output containerAppFqdn string = containerApp.outputs.fqdn
+output containerAppFqdn string = deployContainerApp ? containerApp.outputs.fqdn : ''
 
 @description('Container App URL')
-output containerAppUrl string = containerApp.outputs.url
+output containerAppUrl string = deployContainerApp ? containerApp.outputs.url : ''
 
 @description('MCP endpoint URL')
-output mcpEndpoint string = '${containerApp.outputs.url}/mcp'
+output mcpEndpoint string = deployContainerApp ? '${containerApp.outputs.url}/mcp' : ''
 
 @description('MCP Server container image deployed')
 output mcpServerImage string = effectiveMcpServerImage
+
+@description('Whether container app was deployed')
+output containerAppDeployed bool = deployContainerApp

@@ -255,6 +255,8 @@ do_push() {
 # =============================================================================
 
 deploy_infrastructure() {
+    local deploy_container_app="${1:-true}"
+
     log_info "Deploying infrastructure to Azure..."
 
     # Set Azure subscription
@@ -275,7 +277,11 @@ deploy_infrastructure() {
     export DEPLOYER_PRINCIPAL_ID="$deployer_principal_id"
 
     # Deploy Bicep templates
-    log_info "Deploying Bicep templates..."
+    if [[ "$deploy_container_app" == "true" ]]; then
+        log_info "Deploying Bicep templates (with container app)..."
+    else
+        log_info "Deploying Bicep templates (foundation only, no container app)..."
+    fi
 
     local deployment_name="bearer-mcp-deploy-$(date +%Y%m%d%H%M%S)"
 
@@ -285,6 +291,7 @@ deploy_infrastructure() {
         --template-file "$INFRA_DIR/main.bicep" \
         --parameters "$INFRA_DIR/main.bicepparam" \
         --parameters mcpServerImage="${MCP_SERVER_IMAGE:-}" \
+        --parameters deployContainerApp="$deploy_container_app" \
         --output none
 
     log_success "Infrastructure deployed successfully"
@@ -446,9 +453,9 @@ cmd_deploy() {
     validate_neo4j_env
     lint_bicep
 
-    # Phase 1: Deploy foundation (creates ACR, etc.)
+    # Phase 1: Deploy foundation only (ACR, Key Vault, etc. - NO container app yet)
     log_info "Phase 1: Deploying foundation infrastructure..."
-    deploy_infrastructure
+    deploy_infrastructure "false"
 
     # Phase 2: Build Docker image
     log_info "Phase 2: Building Docker image..."
@@ -458,9 +465,9 @@ cmd_deploy() {
     log_info "Phase 3: Pushing to Container Registry..."
     do_push
 
-    # Phase 4: Redeploy with actual image
-    log_info "Phase 4: Deploying with container image..."
-    deploy_infrastructure
+    # Phase 4: Deploy container app with actual image
+    log_info "Phase 4: Deploying container app..."
+    deploy_infrastructure "true"
 
     # Generate access configuration
     generate_mcp_access
@@ -484,25 +491,27 @@ cmd_redeploy() {
     do_build
     do_push
 
-    # Update container app with new image
+    # Check if container app exists
     local container_app_name
     container_app_name=$(az containerapp list \
         --resource-group "$AZURE_RESOURCE_GROUP" \
         --query "[?contains(name, '-b-')].name | [0]" \
-        --output tsv)
+        --output tsv 2>/dev/null || echo "")
 
-    if [[ -z "$container_app_name" ]]; then
-        log_error "Container App not found. Run full deployment first."
-        exit 1
+    if [[ -n "$container_app_name" ]]; then
+        # Container app exists - do a quick update
+        log_info "Updating existing Container App: $container_app_name"
+        az containerapp update \
+            --name "$container_app_name" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --container-name mcp-server \
+            --image "$MCP_SERVER_IMAGE" \
+            --output none
+    else
+        # Container app doesn't exist - deploy via Bicep
+        log_info "Container App not found - deploying via Bicep..."
+        deploy_infrastructure "true"
     fi
-
-    log_info "Updating Container App: $container_app_name"
-    az containerapp update \
-        --name "$container_app_name" \
-        --resource-group "$AZURE_RESOURCE_GROUP" \
-        --container-name mcp-server \
-        --image "$MCP_SERVER_IMAGE" \
-        --output none
 
     generate_mcp_access
     log_success "Redeploy complete!"
@@ -524,6 +533,42 @@ cmd_logs() {
     show_logs "${1:-100}"
 }
 
+cmd_test() {
+    log_info "Running bearer token authentication test..."
+
+    # Check for MCP_ACCESS.json or endpoint
+    if [[ ! -f "$MCP_ACCESS_FILE" ]]; then
+        log_error "MCP_ACCESS.json not found. Run deploy first."
+        exit 1
+    fi
+
+    # Check for required auth environment variables
+    local has_token="${MCP_BEARER_TOKEN:-}"
+    local has_azure_creds="false"
+
+    if [[ -n "${AZURE_TENANT_ID:-}" && -n "${AZURE_CLIENT_ID:-}" && -n "${AZURE_CLIENT_SECRET:-}" ]]; then
+        has_azure_creds="true"
+    fi
+
+    if [[ -z "$has_token" && "$has_azure_creds" != "true" ]]; then
+        log_error "No authentication configured."
+        log_error "Set one of:"
+        log_error "  - MCP_BEARER_TOKEN (direct token)"
+        log_error "  - AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (Azure Entra ID)"
+        exit 1
+    fi
+
+    # Get endpoint from MCP_ACCESS.json
+    local endpoint
+    endpoint=$(jq -r '.endpoint' "$MCP_ACCESS_FILE")
+    export MCP_ENDPOINT="$endpoint"
+
+    log_info "Testing endpoint: $endpoint"
+
+    # Run the test client with uv (dependencies declared inline via PEP 723)
+    uv run "$PROJECT_ROOT/client/test_bearer_client.py"
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -537,6 +582,7 @@ Usage: $0 [command] [options]
 Commands:
   deploy      Full deployment (default)
   redeploy    Rebuild and redeploy container
+  test        Run bearer token authentication test
   lint        Lint Bicep templates
   status      Show deployment status
   logs [N]    Show last N container logs (default: 100)
@@ -545,6 +591,7 @@ Commands:
 Examples:
   $0                    # Full deployment
   $0 redeploy           # Rebuild and update
+  $0 test               # Test bearer auth
   $0 logs 50            # Show last 50 log lines
   $0 status             # Check deployment status
 
@@ -567,6 +614,10 @@ main() {
         redeploy)
             load_env
             cmd_redeploy
+            ;;
+        test)
+            load_env
+            cmd_test
             ;;
         lint)
             cmd_lint

@@ -4,9 +4,97 @@ Deploy the Neo4j MCP server to Azure Container Apps with native bearer token aut
 
 ## Status
 
-**Phase 2-5 Complete** - Infrastructure templates, deployment script, and documentation created. Ready for Phase 6 (testing and validation).
+**Ready for Testing** - Infrastructure templates, deployment script, and documentation complete.
 
-See [BEARER_AUTH_V2.md](../BEARER_AUTH_V2.md) for full implementation status.
+See [BEARER_AUTH_V2.md](../BEARER_AUTH_V2.md) for implementation details.
+
+## Quick Start with azure-ee-template
+
+If you've deployed Neo4j Enterprise using the [azure-ee-template](https://github.com/neo4j-partners/azure-ee-template), follow these steps:
+
+### Prerequisites
+
+Ensure you have:
+- Deployed Neo4j Enterprise with M2M authentication enabled via azure-ee-template
+- Azure CLI installed and authenticated (`az login`)
+- Docker with buildx support
+- The Neo4j MCP server source cloned locally
+
+### Step 1: Copy Deployment Configuration
+
+After deploying Neo4j with azure-ee-template, copy the deployment JSON file:
+
+```bash
+# From your azure-ee-template directory
+cp azure-ee-template/.deployments/standalone-v2025.json azure-neo4j-mcp/bearer-mcp-server/neo4j-deployment.json
+```
+
+This file contains all the connection details and M2M configuration:
+
+```json
+{
+  "connection": {
+    "neo4j_uri": "bolt://vm0.neo4j-xxx.eastus2.cloudapp.azure.com:7687",
+    "username": "neo4j",
+    "password": "..."
+  },
+  "m2m_auth": {
+    "enabled": true,
+    "tenant_id": "...",
+    "client_app_id": "...",
+    "audience": "api://..."
+  }
+}
+```
+
+### Step 2: Run Setup Script
+
+```bash
+cd /Users/ryanknight/projects/azure/azure-neo4j-mcp/bearer-mcp-server
+
+# Run the setup script
+./scripts/setup-env.sh
+```
+
+The setup script will:
+- Read configuration from `neo4j-deployment.json`
+- Create/update `.env` with Neo4j URI and M2M settings
+- Preserve existing credentials (AZURE_CLIENT_SECRET) if already set
+- Auto-discover the Neo4j MCP repository path
+- Prompt for any missing values
+
+**Important**: You'll need to enter your **AZURE_CLIENT_SECRET** - this was shown during the azure-ee-template M2M setup. If you didn't save it, regenerate it in the Azure Portal.
+
+### Step 3: Deploy
+
+```bash
+./scripts/deploy.sh
+```
+
+### Step 4: Test with Bearer Token
+
+```bash
+cd client
+pip install -r requirements.txt
+python test_bearer_client.py
+```
+
+### Non-Interactive Setup
+
+For CI/CD or scripted deployments:
+
+```bash
+# Set the client secret first
+export AZURE_CLIENT_SECRET="your-client-secret"
+
+# Run non-interactive setup
+./scripts/setup-env.sh --non-interactive
+
+# Deploy
+./scripts/deploy.sh
+```
+
+---
 
 ## Architecture
 
@@ -55,7 +143,7 @@ See [BEARER_AUTH_V2.md](../BEARER_AUTH_V2.md) for full implementation status.
 Bearer token authentication requires Neo4j to validate JWT tokens:
 
 - **Neo4j Enterprise Edition** (self-hosted) with OIDC configured, OR
-- **Neo4j Aura Enterprise** with SSO enabled (verify driver-level bearer auth support)
+- **Neo4j deployed via azure-ee-template** with M2M authentication enabled
 
 Neo4j Community Edition and standard Aura tiers do not support OIDC at the driver level.
 
@@ -68,7 +156,65 @@ Any OIDC-compliant identity provider:
 - Auth0
 - Keycloak
 - AWS Cognito
-- Google (limited group claims support)
+
+---
+
+## Integration with azure-ee-template
+
+The [azure-ee-template](https://github.com/neo4j-partners/azure-ee-template) provides automated Neo4j Enterprise deployment with optional M2M (Machine-to-Machine) bearer token authentication.
+
+### How azure-ee-template M2M Works
+
+When you run `uv run neo4j-deploy setup` in the azure-ee-template, Step 7 offers M2M configuration:
+
+1. **Automatic Setup**: Creates Azure Entra ID app registrations
+   - **API App**: Represents Neo4j as an API resource with roles (Admin, ReadWrite, ReadOnly)
+   - **Client App**: For your applications to authenticate
+
+2. **OIDC Configuration**: Injects into Neo4j's `neo4j.conf`:
+   ```properties
+   dbms.security.authentication_providers=oidc-m2m,native
+   dbms.security.authorization_providers=oidc-m2m,native
+   dbms.security.oidc.m2m.well_known_discovery_uri=https://login.microsoftonline.com/{tenant}/.well-known/openid-configuration
+   dbms.security.oidc.m2m.audience={audience}
+   dbms.security.oidc.m2m.authorization.group_to_role_mapping="Neo4j.Admin"=admin;"Neo4j.ReadWrite"=editor;"Neo4j.ReadOnly"=reader
+   ```
+
+### Deployment JSON File
+
+After deploying with azure-ee-template, a JSON file is created at `.deployments/<scenario>.json` containing all configuration:
+
+```json
+{
+  "scenario": "standalone-v2025",
+  "connection": {
+    "neo4j_uri": "bolt://vm0.neo4j-xxx.eastus2.cloudapp.azure.com:7687",
+    "username": "neo4j",
+    "password": "..."
+  },
+  "m2m_auth": {
+    "enabled": true,
+    "tenant_id": "...",
+    "client_app_id": "...",
+    "audience": "api://...",
+    "token_endpoint": "https://login.microsoftonline.com/.../oauth2/v2.0/token"
+  }
+}
+```
+
+The `setup-env.sh` script reads this file to configure your `.env` automatically.
+
+### Important: Save Your Client Secret
+
+During azure-ee-template M2M setup, a client secret is displayed **once**. Save it immediately!
+
+If you lose it, regenerate in Azure Portal:
+1. Go to **App registrations**
+2. Find the client app (check `client_app_id` in deployment JSON)
+3. Navigate to **Certificates & secrets**
+4. Create a new client secret
+
+---
 
 ## Infrastructure Components
 
@@ -102,7 +248,16 @@ In bearer mode, Key Vault stores only connection information:
 ### Required
 
 ```bash
-NEO4J_URI=neo4j+s://xxx.databases.neo4j.io
+# Azure Configuration
+AZURE_SUBSCRIPTION_ID=your-subscription-id
+AZURE_RESOURCE_GROUP=neo4j-mcp-bearer-rg
+AZURE_LOCATION=eastus
+
+# Neo4j Connection
+NEO4J_URI=bolt://vm0.neo4j-xxx.eastus2.cloudapp.azure.com:7687
+
+# Build Configuration
+NEO4J_MCP_REPO=/path/to/neo4j-mcp-source
 ```
 
 ### Optional
@@ -127,7 +282,23 @@ CORS_ALLOWED_ORIGINS=*            # CORS configuration
 
 ## Neo4j OIDC Configuration
 
-For self-hosted Neo4j Enterprise, add to `neo4j.conf`:
+### For azure-ee-template Deployments
+
+If you used azure-ee-template with M2M enabled, Neo4j is already configured. The OIDC provider is named `oidc-m2m`:
+
+```properties
+dbms.security.authentication_providers=oidc-m2m,native
+dbms.security.authorization_providers=oidc-m2m,native
+dbms.security.oidc.m2m.well_known_discovery_uri=https://login.microsoftonline.com/{tenant-id}/.well-known/openid-configuration
+dbms.security.oidc.m2m.audience={audience}
+dbms.security.oidc.m2m.claims.username=sub
+dbms.security.oidc.m2m.claims.groups=roles
+dbms.security.oidc.m2m.authorization.group_to_role_mapping="Neo4j.Admin"=admin;"Neo4j.ReadWrite"=editor;"Neo4j.ReadOnly"=reader
+```
+
+### For Manual Neo4j Enterprise Setup
+
+Add to `neo4j.conf`:
 
 ```properties
 # Enable OIDC authentication
@@ -146,24 +317,31 @@ dbms.security.oidc.azure.authorization.group_to_role_mapping=neo4j-admins=admin;
 
 ## Client Usage
 
-### Python Example
+### Python Example with azure-ee-template M2M
 
 ```python
-import msal
+from msal import ConfidentialClientApplication
 import requests
 
+# M2M configuration from azure-ee-template settings.yaml
+TENANT_ID = "your-tenant-id"
+CLIENT_ID = "your-client-app-id"
+CLIENT_SECRET = "your-client-secret"
+AUDIENCE = "api://neo4j-m2m"  # or your custom audience
+
 # Obtain token from Azure Entra ID
-app = msal.ConfidentialClientApplication(
-    client_id="your-app-id",
-    authority="https://login.microsoftonline.com/your-tenant-id",
-    client_credential="your-client-secret"
+app = ConfidentialClientApplication(
+    client_id=CLIENT_ID,
+    authority=f"https://login.microsoftonline.com/{TENANT_ID}",
+    client_credential=CLIENT_SECRET
 )
-result = app.acquire_token_for_client(scopes=["api://your-app-id/.default"])
+result = app.acquire_token_for_client(scopes=[f"{AUDIENCE}/.default"])
 token = result["access_token"]
 
 # Call MCP server
+MCP_ENDPOINT = "https://your-mcp-server.azurecontainerapps.io"
 response = requests.post(
-    "https://your-mcp-server.azurecontainerapps.io/mcp",
+    f"{MCP_ENDPOINT}/mcp",
     headers={
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -178,13 +356,16 @@ response = requests.post(
         "id": 1
     }
 )
+print(response.json())
 ```
 
 ### curl Example
 
 ```bash
-# Obtain token (using Azure CLI as example)
-TOKEN=$(az account get-access-token --resource api://your-app-id --query accessToken -o tsv)
+# Obtain token using Azure CLI
+TOKEN=$(az account get-access-token \
+  --resource api://neo4j-m2m \
+  --query accessToken -o tsv)
 
 # Call MCP server
 curl -X POST https://your-mcp-server.azurecontainerapps.io/mcp \
@@ -199,6 +380,25 @@ curl -X POST https://your-mcp-server.azurecontainerapps.io/mcp \
     },
     "id": 1
   }'
+```
+
+### Using the Test Client
+
+```bash
+cd client
+
+# Set environment variables
+export MCP_ENDPOINT="https://your-mcp-server.azurecontainerapps.io"
+export AZURE_TENANT_ID="your-tenant-id"
+export AZURE_CLIENT_ID="your-client-app-id"
+export AZURE_CLIENT_SECRET="your-client-secret"
+
+# Or set MCP_BEARER_TOKEN directly if you have a token
+# export MCP_BEARER_TOKEN="eyJ..."
+
+# Run tests
+pip install -r requirements.txt
+python test_bearer_client.py
 ```
 
 ## Security Benefits
@@ -235,50 +435,72 @@ bearer-mcp-server/
 │       ├── log-analytics.bicep
 │       └── managed-identity.bicep
 ├── scripts/
-│   └── deploy.sh               # Deployment automation
+│   ├── setup-env.sh            # Environment setup from deployment JSON
+│   ├── deploy.sh               # Deployment automation
+│   └── cleanup.sh              # Delete Azure resources
 ├── client/
 │   ├── test_bearer_client.py   # Test client with token acquisition
 │   └── requirements.txt        # Python dependencies
 ├── docs/
 │   ├── IDENTITY_PROVIDER_SETUP.md  # IdP configuration guides
 │   └── TROUBLESHOOTING.md      # Debugging guide
+├── neo4j-deployment.json       # Copy from azure-ee-template (not in git)
 ├── .env.sample                 # Environment template
+├── .env                        # Your configuration (not in git)
 └── README.md
 ```
 
-## Quick Start
+## Commands
 
 ```bash
-# 1. Copy environment template
-cp .env.sample .env
+# Setup environment from azure-ee-template deployment
+cp /path/to/azure-ee-template/.deployments/standalone-v2025.json ./neo4j-deployment.json
+./scripts/setup-env.sh
 
-# 2. Configure .env with your settings
-#    - AZURE_SUBSCRIPTION_ID
-#    - AZURE_RESOURCE_GROUP
-#    - AZURE_LOCATION
-#    - NEO4J_URI
-#    - NEO4J_MCP_REPO
+# Setup (non-interactive, requires AZURE_CLIENT_SECRET env var)
+./scripts/setup-env.sh --non-interactive
 
-# 3. Deploy
+# Full deployment
 ./scripts/deploy.sh
 
-# 4. Configure your identity provider (see docs/IDENTITY_PROVIDER_SETUP.md)
+# Rebuild and redeploy container only
+./scripts/deploy.sh redeploy
 
-# 5. Test with bearer token
-export TOKEN=$(az account get-access-token --resource api://your-app-id --query accessToken -o tsv)
-python client/test_bearer_client.py
+# Test bearer token authentication
+./scripts/deploy.sh test
+
+# Validate Bicep templates
+./scripts/deploy.sh lint
+
+# Show deployment status
+./scripts/deploy.sh status
+
+# View container logs
+./scripts/deploy.sh logs 100
+
+# Cleanup - delete all Azure resources (fast, no prompts)
+./scripts/cleanup.sh
+
+# Cleanup - interactive with confirmation
+./scripts/cleanup.sh --interactive
+
+# Cleanup - wait and purge Key Vault immediately
+./scripts/cleanup.sh --wait
 ```
 
-## Next Steps
+## Troubleshooting
 
-Phase 6-7 will add:
+See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues and solutions.
 
-- End-to-end testing with real identity providers
-- Validation of Neo4j OIDC configurations
-- Updated root documentation
+Quick checks:
+1. Is Neo4j configured for OIDC? Check `neo4j.conf`
+2. Is the token audience correct? Decode at [jwt.io](https://jwt.io)
+3. Can Neo4j reach the IdP's JWKS endpoint?
+4. Are Neo4j roles mapped correctly?
 
 ## References
 
+- [azure-ee-template](https://github.com/neo4j-partners/azure-ee-template) - Neo4j Enterprise Azure deployment
 - [Neo4j SSO Integration](https://neo4j.com/docs/operations-manual/current/authentication-authorization/sso-integration/)
 - [Azure Container Apps Authentication](https://learn.microsoft.com/en-us/azure/container-apps/authentication)
 - [MCP Streamable HTTP Transport](https://spec.modelcontextprotocol.io/specification/2025-03-26/basic/transports/)

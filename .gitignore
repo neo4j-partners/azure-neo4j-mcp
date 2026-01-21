@@ -79,6 +79,10 @@ azuredeploy.parameters.json
 # Generated files
 MCP_ACCESS.json
 APP_REGISTRATION.json
+neo4j-deployment.json
+standalone-v2025.json
+cluster-v2025.json
+deployment.json
 
 # Node (if applicable)
 node_modules/
@@ -89,3 +93,4 @@ yarn-error.log*
 # Logs
 *.log
 logs/
+.test-venv
