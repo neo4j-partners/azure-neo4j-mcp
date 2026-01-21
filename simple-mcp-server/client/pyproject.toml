@@ -1,0 +1,9 @@
+[project]
+name = "neo4j-mcp-test-client"
+version = "0.1.0"
+description = "Test client for validating Neo4j MCP Server deployments"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = []
