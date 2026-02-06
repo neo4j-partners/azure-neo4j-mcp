@@ -107,7 +107,7 @@ This is a good starting point if you want to understand the basics of connecting
 
 This sample showcases the Microsoft Agent Framework (MAF) integration with Neo4j, demonstrating enterprise-grade agent development within the Azure AI Foundry ecosystem.
 
-The sample uses a specialized Neo4j provider package that extends MAF with graph-powered knowledge retrieval capabilities. When deployed, it registers a persistent agent in Azure AI Foundry that can be accessed through the Azure AI platform. This makes it suitable for production scenarios where you need centralized agent management and monitoring.
+The sample uses a specialized Neo4j provider package that extends MAF with graph-powered knowledge retrieval capabilities. When deployed, it registers a persistent agent in Azure AI Foundry that can be accessed through the Azure AI platform. This demonstrates centralized agent management and monitoring capabilities within Azure AI Foundry.
 
 The sample includes three different retrieval strategies to demonstrate various ways of searching graph data:
 

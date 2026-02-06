@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Azure/bicep-types-az/main/src/bicepconfig.schema.json",
+  "analyzers": {
+    "core": {
+      "enabled": true,
+      "rules": {
+        "no-hardcoded-location": {
+          "level": "warning"
+        },
+        "no-unused-params": {
+          "level": "warning"
+        },
+        "no-unused-vars": {
+          "level": "warning"
+        },
+        "prefer-interpolation": {
+          "level": "warning"
+        },
+        "secure-parameter-default": {
+          "level": "error"
+        },
+        "simplify-interpolation": {
+          "level": "warning"
+        }
+      }
+    }
+  }
+}
