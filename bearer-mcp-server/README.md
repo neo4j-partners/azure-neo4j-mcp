@@ -1,16 +1,17 @@
 # Bearer Token MCP Server
 
+> **Disclaimer:** This is a **sample template** provided as-is for demonstration and learning purposes. It is not officially supported and requires full security hardening and review before any production use.
+
 Deploy the Neo4j MCP server to Azure Container Apps with native bearer token authentication for SSO/OIDC integration.
 
 ## Overview
 
-This deployment creates a **single-container MCP (Model Context Protocol) server** on Azure Container Apps that enables AI agents, LLMs, and automation tools to securely query Neo4j databases using **JWT bearer token authentication**.
+This sample deployment creates a **single-container MCP (Model Context Protocol) server** on Azure Container Apps that enables AI agents, LLMs, and automation tools to query Neo4j databases using **JWT bearer token authentication**.
 
-**Key Value Proposition:**
+**Key Characteristics:**
 - **Zero Static Credentials**: No API keys or database passwords stored — every request authenticated via JWT tokens from your identity provider
 - **Per-User Identity**: Each query is attributed to the actual caller, enabling fine-grained audit trails and RBAC
-- **Minimal Infrastructure**: Single container deployment with 33% less resources than proxy-based alternatives
-- **Enterprise-Grade Security**: Leverage your existing Entra ID, Okta, or other OIDC infrastructure
+- **Minimal Infrastructure**: Single container deployment with fewer resources than proxy-based alternatives
 
 **How It Works:**
 1. Client obtains a JWT from an identity provider (Microsoft Entra ID, Okta, etc.)
@@ -23,7 +24,7 @@ This integrates seamlessly with [azure-ee-template](https://github.com/neo4j-par
 
 ## Status
 
-**Ready for Testing** - Infrastructure templates, deployment script, and documentation complete.
+**Sample** — Infrastructure templates, deployment scripts, and documentation are functional but provided as-is without warranty. Review and harden security before any non-demo use.
 
 See [BEARER_AUTH_V2.md](../BEARER_AUTH_V2.md) for implementation details.
 
@@ -54,20 +55,12 @@ See [BEARER_AUTH_V2.md](../BEARER_AUTH_V2.md) for implementation details.
 │  └───────────────────────────────────────────────────────────────┼────────────────────┘   │
 │                                                                  │                        │
 │  ┌───────────────────────┐   ┌───────────────────────┐          │                        │
-│  │  AZURE CONTAINER      │   │  KEY VAULT            │          │                        │
-│  │  REGISTRY (ACR)       │   │  (Minimal Secrets)    │          │                        │
+│  │  KEY VAULT            │   │  LOG ANALYTICS        │          │                        │
+│  │  (Minimal Secrets)    │   │  WORKSPACE            │          │                        │
 │  │                       │   │                       │          │                        │
-│  │  • neo4j-mcp:latest   │   │  • neo4j-uri          │          │                        │
-│  │  • Multi-arch images  │   │  • neo4j-database     │          │                        │
-│  │                       │   │  (NO credentials)     │          │                        │
-│  └───────────────────────┘   └───────────────────────┘          │                        │
-│                                                                  │                        │
-│  ┌───────────────────────┐   ┌───────────────────────┐          │                        │
-│  │  LOG ANALYTICS        │   │  MANAGED IDENTITY     │          │                        │
-│  │  WORKSPACE            │   │                       │          │                        │
-│  │                       │   │  • ACR Pull Access    │          │                        │
-│  │  • Container logs     │   │  • No KV secrets      │          │                        │
-│  │  • Telemetry          │   │    (bearer mode)      │          │                        │
+│  │  • neo4j-uri          │   │  • Container logs     │          │                        │
+│  │  • neo4j-database     │   │  • Telemetry          │          │                        │
+│  │  (NO credentials)     │   │                       │          │                        │
 │  └───────────────────────┘   └───────────────────────┘          │                        │
 │                                                                  │                        │
 └──────────────────────────────────────────────────────────────────┼────────────────────────┘
@@ -193,8 +186,6 @@ If you've deployed Neo4j Enterprise using the [azure-ee-template](https://github
 Ensure you have:
 - Deployed Neo4j Enterprise with M2M authentication enabled via azure-ee-template
 - Azure CLI installed and authenticated (`az login`)
-- Docker with buildx support
-- The Neo4j MCP server source cloned locally
 
 ### Step 1: Copy Deployment Configuration
 
@@ -236,7 +227,6 @@ The setup script will:
 - Read configuration from `neo4j-deployment.json`
 - Create/update `.env` with Neo4j URI and M2M settings
 - Preserve existing credentials (AZURE_CLIENT_SECRET) if already set
-- Auto-discover the Neo4j MCP repository path
 - Prompt for any missing values
 
 **Important**: You'll need to enter your **AZURE_CLIENT_SECRET** - this was shown during the azure-ee-template M2M setup. If you didn't save it, regenerate it in the Azure Portal.
@@ -287,7 +277,6 @@ export AZURE_CLIENT_SECRET="your-client-secret"
 
 - Azure subscription with permissions to create resources
 - Azure CLI installed and authenticated
-- Docker with buildx support
 
 ### Neo4j Requirements
 
@@ -373,12 +362,10 @@ The Bicep templates create:
 
 | Resource | Purpose |
 |----------|---------|
-| **Managed Identity** | ACR image pull authentication |
 | **Log Analytics** | Container telemetry and logging |
-| **Container Registry** | Docker image storage |
 | **Key Vault** | Connection info storage (no credentials) |
 | **Container Environment** | Container Apps hosting |
-| **Container App** | Single MCP server container |
+| **Container App** | Single MCP server container (official Docker Hub image) |
 
 ## Key Vault Contents
 
@@ -406,9 +393,6 @@ AZURE_LOCATION=eastus
 
 # Neo4j Connection
 NEO4J_URI=bolt://vm0.neo4j-xxx.eastus2.cloudapp.azure.com:7687
-
-# Build Configuration
-NEO4J_MCP_REPO=/path/to/neo4j-mcp-source
 ```
 
 ### Optional
@@ -419,6 +403,7 @@ BASE_NAME=neo4jmcp                # Resource naming prefix
 ENVIRONMENT=dev                   # dev, staging, prod
 NEO4J_READ_ONLY=true              # Disable write-cypher tool
 CORS_ALLOWED_ORIGINS=*            # CORS configuration
+MCP_SERVER_IMAGE=docker.io/mcp/neo4j:latest  # Container image override
 ```
 
 ## Authentication Flow
@@ -579,12 +564,10 @@ bearer-mcp-server/
 │   ├── main.bicepparam         # Parameter file
 │   ├── bicepconfig.json        # Linting configuration
 │   └── modules/
-│       ├── container-app.bicep       # Single-container app
+│       ├── container-app.bicep       # Single-container app (Docker Hub image)
 │       ├── container-environment.bicep
-│       ├── container-registry.bicep
 │       ├── key-vault.bicep           # Minimal secrets
-│       ├── log-analytics.bicep
-│       └── managed-identity.bicep
+│       └── log-analytics.bicep
 ├── scripts/
 │   ├── setup-env.sh            # Environment setup from deployment JSON
 │   ├── deploy.sh               # Deployment automation
@@ -611,10 +594,10 @@ cp /path/to/azure-ee-template/.deployments/standalone-v2025.json ./neo4j-deploym
 # Setup (non-interactive, requires AZURE_CLIENT_SECRET env var)
 ./scripts/setup-env.sh --non-interactive
 
-# Full deployment
+# Full deployment (pulls official image from Docker Hub)
 ./scripts/deploy.sh
 
-# Rebuild and redeploy container only
+# Update container image
 ./scripts/deploy.sh redeploy
 
 # Test bearer token authentication

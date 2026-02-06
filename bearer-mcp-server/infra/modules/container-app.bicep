@@ -5,6 +5,7 @@
 //
 // Architecture:
 // - Single MCP Server container (port 8000, external)
+// - Uses official Neo4j MCP image from Docker Hub (docker.io/mcp/neo4j)
 // - Bearer tokens passed through to Neo4j for SSO/OIDC validation
 // - No static credentials - authentication per-request via JWT
 //
@@ -36,14 +37,8 @@ param tags object = {}
 @description('Resource ID of the Container Apps Environment')
 param containerAppsEnvironmentId string
 
-@description('Resource ID of the user-assigned managed identity')
-param managedIdentityId string
-
-@description('Neo4j MCP Server container image')
-param mcpServerImage string
-
-@description('Container Registry login server')
-param containerRegistryLoginServer string
+@description('Neo4j MCP Server container image (default: official Docker Hub image)')
+param mcpServerImage string = 'docker.io/mcp/neo4j:latest'
 
 @description('Neo4j database connection URI')
 @secure()
@@ -68,24 +63,10 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
   name: name
   location: location
   tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${managedIdentityId}': {}
-    }
-  }
   properties: {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
-      // ACR authentication using managed identity
-      registries: [
-        {
-          server: containerRegistryLoginServer
-          identity: managedIdentityId
-        }
-      ]
-      // No secrets from Key Vault - bearer mode uses per-request authentication
-      // Neo4j URI passed as environment variable (not a credential)
+      // No registry auth needed - pulling from public Docker Hub
       secrets: []
       // External ingress configuration - routes directly to MCP server
       // No proxy - MCP server handles authentication natively
@@ -114,7 +95,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
       containers: [
         // =======================================================================
         // Neo4j MCP Server Container
-        // Single container with bearer token authentication
+        // Official image from Docker Hub: docker.io/mcp/neo4j
         // Handles MCP protocol requests and forwards bearer tokens to Neo4j
         // =======================================================================
         {
@@ -137,7 +118,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
             // HTTP transport mode - enables per-request authentication
             // In HTTP mode, credentials come from request headers, not env vars
             {
-              name: 'NEO4J_MCP_TRANSPORT'
+              name: 'NEO4J_TRANSPORT_MODE'
               value: 'http'
             }
             {
@@ -152,15 +133,6 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = {
             {
               name: 'NEO4J_MCP_HTTP_ALLOWED_ORIGINS'
               value: allowedOrigins
-            }
-            // Logging configuration for containerized environment
-            {
-              name: 'NEO4J_LOG_FORMAT'
-              value: 'json'  // Structured logs for Log Analytics
-            }
-            {
-              name: 'NEO4J_LOG_LEVEL'
-              value: 'info'
             }
             // Read-only mode configuration
             {

@@ -85,13 +85,6 @@ cleanup_local_files() {
         cleaned=true
     fi
 
-    if [[ "$CLEAN_DOCKER" == "true" ]] && command_exists docker; then
-        log_info "Cleaning Docker build cache..."
-        docker builder prune -f 2>/dev/null || true
-        log_success "Cleaned Docker build cache"
-        cleaned=true
-    fi
-
     if [[ "$cleaned" == "false" ]]; then
         log_info "No local files to clean"
     fi
@@ -236,7 +229,6 @@ OPTIONS:
     --interactive   Prompt for confirmation before deleting
     --wait          Wait for deletion and purge Key Vault immediately
     --local-only    Only clean local generated files
-    --docker        Also clean Docker build cache
     --help          Show this help message
 
 EXAMPLES:
@@ -256,10 +248,8 @@ WHAT GETS DELETED:
     Azure Resources:
       - Container App
       - Container Apps Environment
-      - Azure Container Registry
       - Key Vault (soft-deleted, purged with --wait)
       - Log Analytics Workspace
-      - Managed Identity
 
     Local Files:
       - MCP_ACCESS.json
@@ -275,7 +265,6 @@ main() {
     FORCE="true"
     NO_WAIT="true"
     LOCAL_ONLY="false"
-    CLEAN_DOCKER="false"
 
     for arg in "$@"; do
         case "$arg" in
@@ -293,9 +282,6 @@ main() {
                 ;;
             --local-only|-l)
                 LOCAL_ONLY="true"
-                ;;
-            --docker|-d)
-                CLEAN_DOCKER="true"
                 ;;
             --help|-h)
                 show_help

@@ -4,18 +4,18 @@
 # =============================================================================
 #
 # Deploys the Neo4j MCP Server to Azure Container Apps with native bearer token
-# authentication. Single container deployment - no Nginx proxy required.
+# authentication. Uses the official Neo4j MCP Docker image from Docker Hub
+# (docker.io/mcp/neo4j) - no local build or ACR required.
 #
 # Usage:
 #   ./scripts/deploy.sh                    # Full deployment
-#   ./scripts/deploy.sh redeploy           # Rebuild and redeploy container
+#   ./scripts/deploy.sh redeploy           # Update container image
 #   ./scripts/deploy.sh lint               # Lint Bicep templates
 #   ./scripts/deploy.sh status             # Show deployment status
 #   ./scripts/deploy.sh logs               # Show container logs
 #
 # Prerequisites:
 #   - Azure CLI installed and authenticated (az login)
-#   - Docker with buildx support
 #   - Neo4j Enterprise with OIDC configured (for bearer auth)
 #
 # Environment Variables (from .env file):
@@ -28,7 +28,7 @@
 #     - NEO4J_DATABASE: Database name (default: neo4j)
 #     - BASE_NAME: Resource naming prefix (default: neo4jmcp)
 #     - ENVIRONMENT: Environment name (default: dev)
-#     - NEO4J_MCP_REPO: Path to Neo4j MCP server source
+#     - MCP_SERVER_IMAGE: Container image override (default: docker.io/mcp/neo4j:latest)
 #
 # =============================================================================
 
@@ -40,6 +40,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INFRA_DIR="$PROJECT_ROOT/infra"
 ENV_FILE="$PROJECT_ROOT/.env"
 MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
+
+# Default container image
+DEFAULT_MCP_IMAGE="docker.io/mcp/neo4j:latest"
 
 # Colors for output
 RED='\033[0;31m'
@@ -77,6 +80,7 @@ load_env() {
     ENVIRONMENT="${ENVIRONMENT:-dev}"
     NEO4J_READ_ONLY="${NEO4J_READ_ONLY:-true}"
     CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-}"
+    MCP_SERVER_IMAGE="${MCP_SERVER_IMAGE:-$DEFAULT_MCP_IMAGE}"
 }
 
 validate_env() {
@@ -130,18 +134,6 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Check Docker
-    if ! command -v docker &> /dev/null; then
-        log_error "Docker not found. Install from: https://docs.docker.com/get-docker/"
-        exit 1
-    fi
-
-    # Check Docker is running
-    if ! docker info &> /dev/null; then
-        log_error "Docker is not running. Please start Docker."
-        exit 1
-    fi
-
     # Check jq
     if ! command -v jq &> /dev/null; then
         log_error "jq not found. Install with: brew install jq (macOS) or apt-get install jq (Linux)"
@@ -173,84 +165,6 @@ lint_bicep() {
 }
 
 # =============================================================================
-# Docker Build
-# =============================================================================
-
-do_build() {
-    log_info "Building Neo4j MCP Server image..."
-
-    local neo4j_mcp_repo="${NEO4J_MCP_REPO:-}"
-
-    if [[ -z "$neo4j_mcp_repo" ]]; then
-        log_error "NEO4J_MCP_REPO not set. Set it to the path of the Neo4j MCP server source."
-        log_error "Clone from: https://github.com/neo4j/mcp"
-        exit 1
-    fi
-
-    if [[ ! -d "$neo4j_mcp_repo" ]]; then
-        log_error "NEO4J_MCP_REPO directory not found: $neo4j_mcp_repo"
-        exit 1
-    fi
-
-    # Get version from git
-    local version
-    version="$(date +%Y-%m-%d)-$(cd "$neo4j_mcp_repo" && git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-
-    log_info "Building version: $version"
-
-    # Build MCP server image
-    docker buildx build \
-        --platform linux/amd64 \
-        --tag "neo4j-mcp-server:$version" \
-        --tag "neo4j-mcp-server:latest" \
-        --load \
-        "$neo4j_mcp_repo"
-
-    log_success "Built neo4j-mcp-server:$version"
-
-    # Export version for later use
-    export MCP_SERVER_VERSION="$version"
-}
-
-# =============================================================================
-# Docker Push to ACR
-# =============================================================================
-
-do_push() {
-    log_info "Pushing images to Azure Container Registry..."
-
-    # Get ACR name from deployment outputs or construct it
-    local acr_name
-    acr_name=$(az acr list \
-        --resource-group "$AZURE_RESOURCE_GROUP" \
-        --query "[?contains(name, 'bacr')].name | [0]" \
-        --output tsv 2>/dev/null || echo "")
-
-    if [[ -z "$acr_name" ]]; then
-        log_error "No Container Registry found. Run full deployment first."
-        exit 1
-    fi
-
-    local acr_server="${acr_name}.azurecr.io"
-    local version="${MCP_SERVER_VERSION:-latest}"
-
-    log_info "Logging in to ACR: $acr_server"
-    az acr login --name "$acr_name"
-
-    # Tag and push MCP server image
-    log_info "Pushing neo4j-mcp-server:$version"
-    docker tag "neo4j-mcp-server:$version" "$acr_server/neo4j-mcp-server:$version"
-    docker tag "neo4j-mcp-server:$version" "$acr_server/neo4j-mcp-server:latest"
-    docker push "$acr_server/neo4j-mcp-server:$version"
-    docker push "$acr_server/neo4j-mcp-server:latest"
-
-    log_success "Images pushed to $acr_server"
-
-    # Export for Bicep deployment
-    export MCP_SERVER_IMAGE="$acr_server/neo4j-mcp-server:$version"
-}
-
-# =============================================================================
 # Infrastructure Deployment
 # =============================================================================
 
@@ -258,6 +172,7 @@ deploy_infrastructure() {
     local deploy_container_app="${1:-true}"
 
     log_info "Deploying infrastructure to Azure..."
+    log_info "Container image: $MCP_SERVER_IMAGE"
 
     # Set Azure subscription
     az account set --subscription "$AZURE_SUBSCRIPTION_ID"
@@ -278,9 +193,9 @@ deploy_infrastructure() {
 
     # Deploy Bicep templates
     if [[ "$deploy_container_app" == "true" ]]; then
-        log_info "Deploying Bicep templates (with container app)..."
+        log_info "Deploying all resources (including container app)..."
     else
-        log_info "Deploying Bicep templates (foundation only, no container app)..."
+        log_info "Deploying foundation only (no container app)..."
     fi
 
     local deployment_name="bearer-mcp-deploy-$(date +%Y%m%d%H%M%S)"
@@ -290,7 +205,6 @@ deploy_infrastructure() {
         --resource-group "$AZURE_RESOURCE_GROUP" \
         --template-file "$INFRA_DIR/main.bicep" \
         --parameters "$INFRA_DIR/main.bicepparam" \
-        --parameters mcpServerImage="${MCP_SERVER_IMAGE:-}" \
         --parameters deployContainerApp="$deploy_container_app" \
         --output none
 
@@ -324,13 +238,12 @@ generate_mcp_access() {
         --output tsv)
 
     local endpoint="https://$fqdn"
-    local version="${MCP_SERVER_VERSION:-unknown}"
 
     # Generate MCP_ACCESS.json for bearer authentication
     cat > "$MCP_ACCESS_FILE" << EOF
 {
   "version": {
-    "mcp_server": "$version",
+    "mcp_server_image": "$MCP_SERVER_IMAGE",
     "deployed_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
     "auth_mode": "bearer-token"
   },
@@ -446,27 +359,15 @@ show_logs() {
 # =============================================================================
 
 cmd_deploy() {
-    log_info "Starting full deployment..."
+    log_info "Starting deployment..."
+    log_info "Using container image: $MCP_SERVER_IMAGE"
 
     check_prerequisites
     validate_env
     validate_neo4j_env
     lint_bicep
 
-    # Phase 1: Deploy foundation only (ACR, Key Vault, etc. - NO container app yet)
-    log_info "Phase 1: Deploying foundation infrastructure..."
-    deploy_infrastructure "false"
-
-    # Phase 2: Build Docker image
-    log_info "Phase 2: Building Docker image..."
-    do_build
-
-    # Phase 3: Push to ACR
-    log_info "Phase 3: Pushing to Container Registry..."
-    do_push
-
-    # Phase 4: Deploy container app with actual image
-    log_info "Phase 4: Deploying container app..."
+    # Single-phase deployment - no build/push needed
     deploy_infrastructure "true"
 
     # Generate access configuration
@@ -483,13 +384,11 @@ cmd_deploy() {
 
 cmd_redeploy() {
     log_info "Starting redeploy..."
+    log_info "Using container image: $MCP_SERVER_IMAGE"
 
     check_prerequisites
     validate_env
     validate_neo4j_env
-
-    do_build
-    do_push
 
     # Check if container app exists
     local container_app_name
@@ -499,7 +398,7 @@ cmd_redeploy() {
         --output tsv 2>/dev/null || echo "")
 
     if [[ -n "$container_app_name" ]]; then
-        # Container app exists - do a quick update
+        # Container app exists - update the image
         log_info "Updating existing Container App: $container_app_name"
         az containerapp update \
             --name "$container_app_name" \
@@ -581,16 +480,20 @@ Usage: $0 [command] [options]
 
 Commands:
   deploy      Full deployment (default)
-  redeploy    Rebuild and redeploy container
+  redeploy    Update container image
   test        Run bearer token authentication test
   lint        Lint Bicep templates
   status      Show deployment status
   logs [N]    Show last N container logs (default: 100)
   help        Show this help message
 
+Container Image:
+  Default: $DEFAULT_MCP_IMAGE
+  Override: Set MCP_SERVER_IMAGE in .env
+
 Examples:
   $0                    # Full deployment
-  $0 redeploy           # Rebuild and update
+  $0 redeploy           # Update to latest image
   $0 test               # Test bearer auth
   $0 logs 50            # Show last 50 log lines
   $0 status             # Check deployment status

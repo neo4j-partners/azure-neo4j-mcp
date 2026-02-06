@@ -2,6 +2,8 @@
 
 Deploy the Neo4j MCP (Model Context Protocol) server to Azure Container Apps. This project provides two deployment approaches to match different security requirements.
 
+> **Disclaimer:** This is a **sample template** provided as-is for demonstration and learning purposes. It is **not officially supported** and requires full security hardening and review before any production use.
+
 ## Choose Your Implementation
 
 | Implementation | Authentication | Best For |
@@ -47,7 +49,7 @@ Uses the Neo4j MCP server's native bearer token authentication. Single-container
 
 ```
 azure-neo4j-mcp/
-├── simple-mcp-server/      # API key authentication (production ready)
+├── simple-mcp-server/      # API key authentication (sample)
 │   ├── scripts/            # Deployment automation
 │   ├── infra/              # Bicep infrastructure templates
 │   ├── client/             # Test client

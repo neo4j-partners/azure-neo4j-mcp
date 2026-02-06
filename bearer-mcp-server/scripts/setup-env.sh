@@ -85,25 +85,6 @@ env_value_exists() {
     [[ -n "$value" ]]
 }
 
-# Try to find Neo4j MCP repo in common locations
-find_neo4j_mcp_repo() {
-    local search_paths=(
-        "$HOME/projects/mcp"
-        "$HOME/mcp"
-        "$HOME/neo4j-mcp"
-        "../../../mcp"
-        "../../mcp"
-        "../mcp"
-    )
-    for path in "${search_paths[@]}"; do
-        if [[ -d "$path" && -f "$path/Dockerfile" ]]; then
-            echo "$(cd "$path" && pwd)"
-            return
-        fi
-    done
-    echo ""
-}
-
 # Find deployment JSON file
 find_deployment_json() {
     # First, check project root for any of the default names
@@ -398,48 +379,6 @@ setup_m2m_config() {
     fi
 }
 
-setup_neo4j_mcp_repo() {
-    log_info "Setting up Neo4j MCP repository path..."
-
-    if env_value_exists "NEO4J_MCP_REPO"; then
-        local repo_path
-        repo_path=$(get_env_value "NEO4J_MCP_REPO")
-        if [[ -d "$repo_path" && -f "$repo_path/Dockerfile" ]]; then
-            log_info "NEO4J_MCP_REPO already configured: $repo_path"
-            return
-        else
-            log_warn "Configured NEO4J_MCP_REPO path does not exist or missing Dockerfile: $repo_path"
-        fi
-    fi
-
-    # Try to find the repo automatically
-    local found_repo
-    found_repo=$(find_neo4j_mcp_repo)
-    if [[ -n "$found_repo" ]]; then
-        set_env_value "NEO4J_MCP_REPO" "$found_repo"
-        log_success "Found and set NEO4J_MCP_REPO=$found_repo"
-        return
-    fi
-
-    if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        log_warn "NEO4J_MCP_REPO not found - configure manually"
-        log_warn "Clone from: https://github.com/neo4j/mcp"
-        return
-    fi
-
-    echo ""
-    log_info "Neo4j MCP server repository not found."
-    log_info "Clone from: https://github.com/neo4j/mcp"
-    read -rp "Enter path to Neo4j MCP repository: " repo_path
-
-    if [[ -n "$repo_path" && -d "$repo_path" ]]; then
-        set_env_value "NEO4J_MCP_REPO" "$repo_path"
-        log_success "Set NEO4J_MCP_REPO=$repo_path"
-    else
-        log_warn "NEO4J_MCP_REPO not set - configure manually"
-    fi
-}
-
 # =============================================================================
 # Help
 # =============================================================================
@@ -482,7 +421,6 @@ BEHAVIOR:
     - Azure subscription ID is updated from current az context
     - Neo4j URI and M2M config are read from deployment JSON
     - AZURE_CLIENT_SECRET is NEVER overwritten if it exists
-    - NEO4J_MCP_REPO is auto-discovered or prompted
 
 EXAMPLE:
     # Copy deployment and run setup
@@ -584,10 +522,6 @@ main() {
     setup_m2m_config
 
     echo ""
-
-    setup_neo4j_mcp_repo
-
-    echo ""
     echo "======================================================================"
     echo "Setup Complete"
     echo "======================================================================"
@@ -605,11 +539,6 @@ main() {
 
     if ! env_value_exists "AZURE_CLIENT_SECRET"; then
         log_warn "AZURE_CLIENT_SECRET needs to be configured manually"
-        needs_manual=true
-    fi
-
-    if ! env_value_exists "NEO4J_MCP_REPO"; then
-        log_warn "NEO4J_MCP_REPO needs to be configured manually"
         needs_manual=true
     fi
 

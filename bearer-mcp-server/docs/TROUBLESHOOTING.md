@@ -228,19 +228,18 @@ az containerapp show \
 
 **Diagnostic**:
 ```bash
-# Check ACR access
-az acr repository list --name your-acr
+# Verify the image exists on Docker Hub
+docker pull docker.io/mcp/neo4j:latest
 
-# Check managed identity role
-az role assignment list \
-  --assignee $(az identity show --name your-identity --resource-group your-rg --query principalId -o tsv) \
-  --scope $(az acr show --name your-acr --query id -o tsv)
+# Check Container App configuration
+az containerapp show --name your-app --resource-group your-rg \
+  --query "properties.template.containers[0].image"
 ```
 
 **Solution**:
-- Ensure AcrPull role is assigned
-- Verify image name and tag
-- Check ACR is in same subscription
+- Verify image name and tag (default: `docker.io/mcp/neo4j:latest`)
+- Check `MCP_SERVER_IMAGE` in `.env` if using a custom image
+- Ensure the Container App has outbound internet access to Docker Hub
 
 ---
 
@@ -294,8 +293,8 @@ az resource list --resource-group your-rg --output table
 # Check Container App status
 az containerapp show --name your-app --resource-group your-rg --output table
 
-# Check ACR
-az acr show --name your-acr --output table
+# Check Key Vault
+az keyvault show --name your-kv --output table
 ```
 
 ---

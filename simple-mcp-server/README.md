@@ -1,5 +1,7 @@
 # Neo4j MCP Server on Azure Container Apps
 
+> **Disclaimer:** This is a **sample template** provided as-is for demonstration and learning purposes. It is **not officially supported** and requires full security hardening and review before any production use.
+
 ## Overview
 
 This project deploys the official [Neo4j MCP server](https://github.com/neo4j/mcp) to Azure Container Apps, allowing AI agents to query Neo4j graph databases through the Model Context Protocol (MCP).
@@ -10,7 +12,7 @@ The Model Context Protocol is an open standard that lets AI assistants like Clau
 
 ### Overview of this Deployment of the MCP Server
 
-This deployment creates a secure, production-ready MCP server in Azure that:
+This sample deployment creates an MCP server in Azure that:
 
 - Connects to your Neo4j database (such as Neo4j Aura or a self-hosted instance)
 - Exposes read-only tools for schema discovery and Cypher query execution
