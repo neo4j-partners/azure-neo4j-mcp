@@ -26,155 +26,6 @@ This integrates seamlessly with [azure-ee-template](https://github.com/neo4j-par
 
 **Sample** — Infrastructure templates, deployment scripts, and documentation are functional but provided as-is without warranty. Review and harden security before any non-demo use.
 
-See [BEARER_AUTH_V2.md](../BEARER_AUTH_V2.md) for implementation details.
-
----
-
-## System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    AZURE INFRASTRUCTURE                                      │
-├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────────────────────┐   │
-│  │                         AZURE CONTAINER APPS ENVIRONMENT                             │   │
-│  │                                                                                      │   │
-│  │   ┌────────────────────────────────────────────────────────────────────────────┐    │   │
-│  │   │                       NEO4J MCP SERVER CONTAINER                           │    │   │
-│  │   │                           (Port 8000, HTTPS)                               │    │   │
-│  │   │                                                                            │    │   │
-│  │   │   ┌──────────────────┐    ┌─────────────────┐    ┌──────────────────┐     │    │   │
-│  │   │   │  MCP Protocol    │    │ Bearer Token    │    │  Neo4j Python    │     │    │   │
-│  │   │   │  Handler         │───▶│ Extractor       │───▶│  Driver          │     │    │   │
-│  │   │   │  (JSON-RPC 2.0)  │    │                 │    │  (BearerAuth)    │     │    │   │
-│  │   │   └──────────────────┘    └─────────────────┘    └────────┬─────────┘     │    │   │
-│  │   │                                                           │               │    │   │
-│  │   └───────────────────────────────────────────────────────────┼───────────────┘    │   │
-│  │                                                               │                    │   │
-│  └───────────────────────────────────────────────────────────────┼────────────────────┘   │
-│                                                                  │                        │
-│  ┌───────────────────────┐   ┌───────────────────────┐          │                        │
-│  │  KEY VAULT            │   │  LOG ANALYTICS        │          │                        │
-│  │  (Minimal Secrets)    │   │  WORKSPACE            │          │                        │
-│  │                       │   │                       │          │                        │
-│  │  • neo4j-uri          │   │  • Container logs     │          │                        │
-│  │  • neo4j-database     │   │  • Telemetry          │          │                        │
-│  │  (NO credentials)     │   │                       │          │                        │
-│  └───────────────────────┘   └───────────────────────┘          │                        │
-│                                                                  │                        │
-└──────────────────────────────────────────────────────────────────┼────────────────────────┘
-                                                                   │
-                                                                   │ Bearer Token
-                                                                   │ (JWT passed through)
-                                                                   │
-                                                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                              NEO4J ENTERPRISE (OIDC-ENABLED)                                 │
-│                           (Deployed via azure-ee-template or self-hosted)                   │
-├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                             │
-│   ┌───────────────────────────────────────────────────────────────────────────────────┐    │
-│   │                            OIDC AUTHENTICATION PROVIDER                            │    │
-│   │                                                                                    │    │
-│   │   Token Received ──▶ Validate against IdP JWKS ──▶ Extract Claims ──▶ Map Roles   │    │
-│   │                                                                                    │    │
-│   │   neo4j.conf:                                                                      │    │
-│   │   ├── dbms.security.authentication_providers=oidc-m2m,native                       │    │
-│   │   ├── dbms.security.oidc.m2m.well_known_discovery_uri=https://login.microsoft...   │    │
-│   │   └── dbms.security.oidc.m2m.authorization.group_to_role_mapping=...               │    │
-│   │                                                                                    │    │
-│   └───────────────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                             │
-│   ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────────────┐     │
-│   │  QUERY EXECUTION    │   │  ROLE-BASED ACCESS  │   │  AUDIT LOGGING               │     │
-│   │                     │   │                     │   │                              │     │
-│   │  Cypher queries run │   │  Neo4j.Admin=admin  │   │  Every query attributed     │     │
-│   │  with user identity │   │  Neo4j.ReadWrite=   │   │  to actual user identity    │     │
-│   │                     │   │       editor        │   │  from JWT claims            │     │
-│   │                     │   │  Neo4j.ReadOnly=    │   │                              │     │
-│   │                     │   │       reader        │   │                              │     │
-│   └─────────────────────┘   └─────────────────────┘   └─────────────────────────────┘     │
-│                                                                                             │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                              IDENTITY PROVIDER (Microsoft Entra ID)                          │
-├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                             │
-│   ┌───────────────────────────────────────┐   ┌───────────────────────────────────────┐    │
-│   │  API APP REGISTRATION                  │   │  CLIENT APP REGISTRATION              │    │
-│   │  (Neo4j as Resource)                   │   │  (Your Application)                   │    │
-│   │                                        │   │                                       │    │
-│   │  • Audience: api://neo4j-m2m           │   │  • Client ID: {guid}                  │    │
-│   │  • App Roles:                          │   │  • Client Secret: ******              │    │
-│   │    - Neo4j.Admin                       │   │  • API Permissions:                   │    │
-│   │    - Neo4j.ReadWrite                   │   │    - Neo4j.Admin (or other role)      │    │
-│   │    - Neo4j.ReadOnly                    │   │                                       │    │
-│   │                                        │   │                                       │    │
-│   └───────────────────────────────────────┘   └───────────────────────────────────────┘    │
-│                                                                                             │
-│                                         │                                                   │
-│                                         │ OAuth 2.0 Client Credentials Flow                │
-│                                         ▼                                                   │
-│                              ┌─────────────────────┐                                       │
-│                              │  TOKEN ENDPOINT     │                                       │
-│                              │                     │                                       │
-│                              │  POST /oauth2/v2.0/ │                                       │
-│                              │       token         │                                       │
-│                              │                     │                                       │
-│                              │  Returns: JWT with  │                                       │
-│                              │  - aud (audience)   │                                       │
-│                              │  - roles (claims)   │                                       │
-│                              │  - exp (expiry)     │                                       │
-│                              └─────────────────────┘                                       │
-│                                                                                             │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                       CLIENT APPLICATIONS                                    │
-├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                             │
-│   ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────────────┐     │
-│   │  AI AGENTS          │   │  LLM APPLICATIONS   │   │  AUTOMATION TOOLS            │     │
-│   │                     │   │                     │   │                              │     │
-│   │  • Claude Code      │   │  • Custom RAG apps  │   │  • CI/CD pipelines           │     │
-│   │  • Cursor           │   │  • LangChain        │   │  • Data ingestion            │     │
-│   │  • Windsurf         │   │  • LlamaIndex       │   │  • Scheduled jobs            │     │
-│   │  • VS Code Copilot  │   │                     │   │                              │     │
-│   └─────────────────────┘   └─────────────────────┘   └─────────────────────────────┘     │
-│                                                                                             │
-│   Authentication Flow:                                                                      │
-│   ┌───────────────────────────────────────────────────────────────────────────────────┐    │
-│   │                                                                                    │    │
-│   │   1. Acquire Token    2. Call MCP Server      3. Query Execution                   │    │
-│   │                                                                                    │    │
-│   │   Client ──────────▶ Entra ID ──────────▶ JWT Token                                │    │
-│   │                                              │                                     │    │
-│   │                                              ▼                                     │    │
-│   │   Client ──────────▶ MCP Server ──────────▶ Neo4j ──────────▶ Results             │    │
-│   │   POST /mcp         Authorization:          BearerAuth                             │    │
-│   │   (JSON-RPC)        Bearer <jwt>            validates token                        │    │
-│   │                                                                                    │    │
-│   └───────────────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                             │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Data Flow Summary
-
-```
-┌────────────┐     ┌───────────┐     ┌───────────────┐     ┌──────────────┐     ┌─────────┐
-│   Client   │────▶│ Entra ID  │────▶│  MCP Server   │────▶│ Neo4j (OIDC) │────▶│ Results │
-│            │     │           │     │  (Azure CA)   │     │              │     │         │
-│ 1. Request │     │ 2. Issue  │     │ 3. Extract &  │     │ 4. Validate  │     │ 6. Data │
-│    Token   │     │    JWT    │     │    Forward    │     │    Token &   │     │         │
-│            │◀────│           │     │    Token      │     │    Execute   │────▶│ 5. Audit│
-└────────────┘     └───────────┘     └───────────────┘     └──────────────┘     └─────────┘
-```
-
 ---
 
 ## Quick Start with azure-ee-template
@@ -187,13 +38,20 @@ Ensure you have:
 - Deployed Neo4j Enterprise with M2M authentication enabled via azure-ee-template
 - Azure CLI installed and authenticated (`az login`)
 
-### Step 1: Copy Deployment Configuration
 
-After deploying Neo4j with azure-ee-template, copy the deployment JSON file:
+### Step 0: cd to bearer-mcp-server
 
 ```bash
-# From your azure-ee-template directory
-cp azure-ee-template/.deployments/standalone-v2025.json azure-neo4j-mcp/bearer-mcp-server/neo4j-deployment.json
+cd bearer-mcp-server
+```
+
+### Step 1: Copy Deployment Configuration
+
+After deploying Neo4j with azure-ee-template, copy the deployment JSON file into this project's root directory (`bearer-mcp-server/`):
+
+```bash
+# Copy into the bearer-mcp-server directory as neo4j-deployment.json
+cp /path/to/azure-ee-template/.deployments/standalone-v2025.json ./neo4j-deployment.json
 ```
 
 This file contains all the connection details and M2M configuration:
@@ -217,8 +75,6 @@ This file contains all the connection details and M2M configuration:
 ### Step 2: Run Setup Script
 
 ```bash
-cd /Users/ryanknight/projects/azure/azure-neo4j-mcp/bearer-mcp-server
-
 # Run the setup script
 ./scripts/setup-env.sh
 ```
@@ -240,9 +96,7 @@ The setup script will:
 ### Step 4: Test with Bearer Token
 
 ```bash
-cd client
-pip install -r requirements.txt
-python test_bearer_client.py
+./scripts/deploy.sh test
 ```
 
 ### Non-Interactive Setup
@@ -260,16 +114,11 @@ export AZURE_CLIENT_SECRET="your-client-secret"
 ./scripts/deploy.sh
 ```
 
-## Key Differences from simple-mcp-server
+---
 
-| Aspect | simple-mcp-server | bearer-mcp-server |
-|--------|-------------------|-------------------|
-| **Containers** | Two (Nginx proxy + MCP server) | One (MCP server only) |
-| **Authentication** | Static API key | JWT bearer tokens |
-| **Neo4j Credentials** | Environment variables | Per-request bearer tokens |
-| **Identity** | Shared across all callers | Per-caller identity |
-| **Audit Trail** | API key used | User identity logged |
-| **Requirements** | Any Neo4j | Neo4j Enterprise with OIDC |
+## System Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system architecture diagram.
 
 ## Prerequisites
 
@@ -408,7 +257,7 @@ MCP_SERVER_IMAGE=docker.io/mcp/neo4j:latest  # Container image override
 
 ## Authentication Flow
 
-See the [System Architecture](#system-architecture) diagram above for the complete end-to-end flow. In summary:
+See the [Architecture diagram](docs/ARCHITECTURE.md) for the complete end-to-end flow. In summary:
 
 1. **Token Acquisition**: Client obtains JWT from identity provider (Entra ID, Okta, etc.)
 2. **MCP Request**: Client sends request with `Authorization: Bearer <token>` header
@@ -576,8 +425,9 @@ bearer-mcp-server/
 │   ├── test_bearer_client.py   # Test client with token acquisition
 │   └── requirements.txt        # Python dependencies
 ├── docs/
+│   ├── ARCHITECTURE.md             # System architecture diagrams
 │   ├── IDENTITY_PROVIDER_SETUP.md  # IdP configuration guides
-│   └── TROUBLESHOOTING.md      # Debugging guide
+│   └── TROUBLESHOOTING.md          # Debugging guide
 ├── neo4j-deployment.json       # Copy from azure-ee-template (not in git)
 ├── .env.sample                 # Environment template
 ├── .env                        # Your configuration (not in git)

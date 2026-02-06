@@ -102,40 +102,18 @@ uv run test_http_mode.py --endpoint http://localhost:9000
 
 ## Bearer Token Testing
 
-To fully test bearer token authentication, you need:
+To test bearer token authentication, first set up `bearer-mcp-server/` following its [README](../bearer-mcp-server/README.md), then copy the `.env` file:
 
-### 1. Identity Provider Setup
-- **Azure Entra ID**: Register an app, create a client secret
-- **Okta**: Create an OAuth app with client credentials grant
-- **Other**: Any OIDC-compliant IdP
-
-### 2. Neo4j OIDC Configuration
-Neo4j must be configured to validate tokens against your IdP:
-```
-dbms.security.authentication_providers=oidc-azure,native
-dbms.security.oidc.azure.issuer=https://login.microsoftonline.com/{tenant}/v2.0
-dbms.security.oidc.azure.jwks_uri=https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys
-dbms.security.oidc.azure.audience={client_id}
-```
-
-### 3. Test with Acquired Token
 ```bash
-# Option A: Let the test script acquire the token
-uv run test_http_mode.py \
-  --azure-tenant-id $AZURE_TENANT_ID \
-  --azure-client-id $AZURE_CLIENT_ID \
-  --azure-client-secret $AZURE_CLIENT_SECRET
+# From the local_http_validation directory
+cp ../bearer-mcp-server/.env .env
 
-# Option B: Use environment variables
-export AZURE_TENANT_ID="..."
-export AZURE_CLIENT_ID="..."
-export AZURE_CLIENT_SECRET="..."
-uv run test_http_mode.py
-
-# Option C: Pre-acquired token
-export MCP_BEARER_TOKEN="eyJ..."
+# Run the test - Azure token acquired automatically!
 uv run test_http_mode.py
 ```
+
+The test script reads the same environment variables:
+- `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_AUDIENCE`
 
 ## What Gets Tested
 
