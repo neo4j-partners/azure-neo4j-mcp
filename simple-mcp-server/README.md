@@ -204,7 +204,21 @@ See the [samples/](./samples/) directory for complete agent implementations (sam
 - **langgraph-mcp-agent** - LangGraph ReAct agent that connects to the MCP server using `langchain-mcp-adapters`. Uses Azure OpenAI (GPT-4o) with Azure CLI authentication. Simple CLI interface for interactive queries.
 - **sample-maf-agent** - Microsoft Agent Framework (MAF) samples using the [`agent-framework-neo4j`](https://github.com/neo4j-partners/neo4j-maf-provider) provider and [Neo4j context provider](https://github.com/neo4j-partners/neo4j-maf-provider). Creates a persistent `api-arches-agent` in Azure AI Foundry with support for fulltext, vector, and graph-enriched search strategies.
 
-### 6. Manual Access (Optional)
+### 6. Connect from Azure AI Foundry
+
+To add the MCP server as a tool in Azure AI Foundry, open the **Add Model Context Protocol tool** dialog and fill in the fields using values from `MCP_ACCESS.json`:
+
+| Field | Value |
+|-------|-------|
+| **Name** | Any name you like (e.g., `neo4j-mcp-server`) |
+| **Remote MCP Server endpoint** | Your `endpoint` value with `/mcp` appended (e.g., `https://neo4j-mcp-server.azurecontainerapps.io/mcp`) |
+| **Authentication** | `Key-based` |
+| **Credential key** | `Authorization` |
+| **Credential value** | `Bearer <your-api-key>` |
+
+> **Note:** The endpoint in `MCP_ACCESS.json` does not include the `/mcp` path — you must append it. The credential value must include the `Bearer ` prefix before the API key.
+
+### 7. Manual Access (Optional)
 
 After deployment, `MCP_ACCESS.json` contains everything needed to connect:
 
@@ -225,7 +239,7 @@ curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
 ```
 
 
-### 7. Databricks Setup
+### 8. Databricks Setup
 
 After deploying the MCP server:
 
