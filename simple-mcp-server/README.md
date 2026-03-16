@@ -23,6 +23,232 @@ This sample deployment creates an MCP server in Azure that:
 
 Azure Container Apps provides a fully managed environment for running containers without managing infrastructure. This deployment uses Container Apps because it offers HTTPS by default, integrates with Azure Key Vault for secrets, and scales to zero when not in use to minimize costs.
 
+## Quick Start: Multiple Deployments
+
+All scripts support the `--env <file>` flag, allowing you to deploy multiple MCP servers in parallel — each connected to a different Neo4j database — without env files overwriting each other.
+
+### Naming Convention
+
+The env file suffix drives the naming of access files, Databricks connections, and more:
+
+| Env File | MCP_ACCESS File | Databricks Connection |
+|----------|----------------|-----------------------|
+| `.env` | `MCP_ACCESS.json` | `neo4j_mcp_server` |
+| `.env.manufacturing` | `MCP_ACCESS.manufacturing.json` | `manufacturing_mcp_server` |
+| `.env.finance` | `MCP_ACCESS.finance.json` | `finance_mcp_server` |
+
+### 1. Setup
+
+Create a named env file for each deployment:
+
+```bash
+# "Manufacturing" database deployment
+./scripts/setup-env.sh --env .env.manufacturing
+
+# "Finance" database deployment
+./scripts/setup-env.sh --env .env.finance
+```
+
+Each env file must use a **unique `AZURE_RESOURCE_GROUP`** (and optionally a unique `BASE_NAME`) so the Azure resources don't collide. Edit each file after creation:
+
+```bash
+# .env.manufacturing
+AZURE_RESOURCE_GROUP=neo4j-mcp-mfg-rg
+BASE_NAME=mcpmfg
+NEO4J_URI=neo4j+s://manufacturing.databases.neo4j.io
+...
+
+# .env.finance
+AZURE_RESOURCE_GROUP=neo4j-mcp-finance-rg
+BASE_NAME=mcpfin
+NEO4J_URI=neo4j+s://finance.databases.neo4j.io
+...
+```
+
+### 2. Deploy
+
+```bash
+# Deploy each independently
+./scripts/deploy.sh --env .env.manufacturing
+./scripts/deploy.sh --env .env.finance
+
+# Each produces its own access file:
+#   .env.manufacturing -> MCP_ACCESS.manufacturing.json
+#   .env.finance       -> MCP_ACCESS.finance.json
+```
+
+### 3. Test
+
+```bash
+./scripts/deploy.sh --env .env.manufacturing test
+./scripts/deploy.sh --env .env.finance test
+```
+
+### 4. Connect from Databricks
+
+```bash
+# Store MCP credentials in Databricks secrets (derives connection name automatically)
+./scripts/setup-databricks-secrets.sh --env .env.manufacturing
+# -> Creates connection: manufacturing_mcp_server
+
+./scripts/setup-databricks-secrets.sh --env .env.finance
+# -> Creates connection: finance_mcp_server
+```
+
+Then import the notebooks and follow the instructions in [databrick_samples/README.md](./databrick_samples/README.md).
+
+### 5. Connect from Azure AI Foundry
+
+Use values from the corresponding `MCP_ACCESS.<name>.json`:
+
+| Field | Value |
+|-------|-------|
+| **Name** | Any name you like (e.g., `manufacturing-mcp-server`) |
+| **Remote MCP Server endpoint** | Your `endpoint` value with `/mcp` appended |
+| **Authentication** | `Key-based` |
+| **Credential key** | `Authorization` |
+| **Credential value** | `Bearer <your-api-key>` |
+
+> **Note:** The endpoint in `MCP_ACCESS.<name>.json` does not include the `/mcp` path — you must append it. The credential value must include the `Bearer ` prefix before the API key.
+
+### 6. Manage
+
+```bash
+# All commands accept --env
+./scripts/deploy.sh --env .env.manufacturing status
+./scripts/deploy.sh --env .env.manufacturing redeploy
+./scripts/logs.sh --env .env.finance 50
+./scripts/cleanup.sh --env .env.manufacturing
+```
+
+When `--env` is omitted, all scripts default to `.env` and `MCP_ACCESS.json` (unchanged from previous behavior).
+
+## Complete Setup Guide
+
+This section covers the full setup process from scratch, including cloning repositories and prerequisites.
+
+### Prerequisites
+
+- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed and authenticated
+- [Docker](https://docs.docker.com/get-docker/) with buildx support
+- [Python 3.10+](https://www.python.org/downloads/) (for test client)
+- Azure subscription with Contributor access
+- Neo4j database (e.g., [Neo4j Aura](https://neo4j.com/cloud/aura/))
+
+### 1. Clone the Repositories
+
+```bash
+# Clone this deployment project
+git clone https://github.com/your-org/azure-neo4j-mcp.git
+cd azure-neo4j-mcp
+
+# Clone the forked Neo4j MCP server with HTTP streaming environment variable support
+git clone -b feat/http-env-credentials https://github.com/neo4j-partners/mcp.git ../mcp
+```
+
+**The Neo4j MCP Server Fork** The [neo4j-partners/mcp](https://github.com/neo4j-partners/mcp) fork on the `feat/http-env-credentials` branch adds features required for Azure Container Apps deployment:
+
+- **Environment variable authentication**: When running in HTTP streaming mode, the server uses `NEO4J_USERNAME` and `NEO4J_PASSWORD` environment variables to connect to Neo4j at startup. This enables fail-fast behavior where credential issues are detected immediately rather than on first request.
+- **Relaxed auth for protocol methods**: MCP handshake methods (`initialize`, `tools/list`) no longer require authentication, enabling platform health checks and capability discovery without credentials.
+
+### 2. Configure Environment
+
+```bash
+# Single deployment (default .env)
+./scripts/setup-env.sh
+
+# Or named deployment for multiple databases
+./scripts/setup-env.sh --env .env.manufacturing
+```
+
+This script will:
+- Detect your Azure subscription from `az` CLI
+- Set default resource group and location
+- Prompt for Neo4j connection details
+- Generate a secure random API key (URL-safe, compatible with Databricks and other HTTP proxies)
+
+### 3. Deploy
+
+```bash
+# Single deployment
+./scripts/deploy.sh
+
+# Or named deployment
+./scripts/deploy.sh --env .env.manufacturing
+```
+
+This will:
+1. Deploy foundation infrastructure (ACR, Key Vault, Log Analytics)
+2. Build the Neo4j MCP server and auth proxy Docker images locally
+3. Push images to Azure Container Registry
+4. Deploy Container App with both containers
+5. Generate `MCP_ACCESS.json` (or `MCP_ACCESS.<name>.json`) with connection details
+
+### 4. Test the Deployment
+
+```bash
+./scripts/deploy.sh test
+
+# Or named deployment
+./scripts/deploy.sh --env .env.manufacturing test
+```
+
+### 5. Use with AI Agents
+
+See the [samples/](./samples/) directory for complete agent implementations (samples have their own Azure AI Foundry infrastructure, separate from the MCP server):
+
+- **langgraph-mcp-agent** - LangGraph ReAct agent that connects to the MCP server using `langchain-mcp-adapters`. Uses Azure OpenAI (GPT-4o) with Azure CLI authentication. Simple CLI interface for interactive queries.
+- **sample-maf-agent** - Microsoft Agent Framework (MAF) samples using the [`agent-framework-neo4j`](https://github.com/neo4j-partners/neo4j-maf-provider) provider and [Neo4j context provider](https://github.com/neo4j-partners/neo4j-maf-provider). Creates a persistent `api-arches-agent` in Azure AI Foundry with support for fulltext, vector, and graph-enriched search strategies.
+
+### 6. Connect from Azure AI Foundry
+
+To add the MCP server as a tool in Azure AI Foundry, open the **Add Model Context Protocol tool** dialog and fill in the fields using values from `MCP_ACCESS.json` (or `MCP_ACCESS.<name>.json`):
+
+| Field | Value |
+|-------|-------|
+| **Name** | Any name you like (e.g., `neo4j-mcp-server`) |
+| **Remote MCP Server endpoint** | Your `endpoint` value with `/mcp` appended (e.g., `https://neo4j-mcp-server.azurecontainerapps.io/mcp`) |
+| **Authentication** | `Key-based` |
+| **Credential key** | `Authorization` |
+| **Credential value** | `Bearer <your-api-key>` |
+
+> **Note:** The endpoint in `MCP_ACCESS.json` does not include the `/mcp` path — you must append it. The credential value must include the `Bearer ` prefix before the API key.
+
+### 7. Manual Access (Optional)
+
+After deployment, `MCP_ACCESS.json` contains everything needed to connect:
+
+```json
+{
+  "endpoint": "https://neo4j-mcp-server.azurecontainerapps.io",
+  "api_key": "<your-api-key>"
+}
+```
+
+**Example Request:**
+
+```bash
+curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
+  -H "Authorization: Bearer <MCP_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "get-schema", "arguments": {}}'
+```
+
+### 8. Databricks Setup
+
+After deploying the MCP server:
+
+```bash
+# Store MCP credentials in Databricks secrets (derives connection name from env file)
+./scripts/setup-databricks-secrets.sh
+
+# Or for a named deployment
+./scripts/setup-databricks-secrets.sh --env .env.manufacturing
+# -> Creates connection: manufacturing_mcp_server
+```
+
+Then import the notebooks into Databricks and follow the instructions in [databrick_samples/README.md](./databrick_samples/README.md).
+
 ## Architecture
 
 ```
@@ -133,179 +359,14 @@ For implementation details, see [databrick_samples/README.md](./databrick_sample
 
 | Resource | Description |
 |----------|-------------|
-| `scripts/setup-databricks-secrets.sh` | Stores MCP credentials in Databricks secrets from `MCP_ACCESS.json` |
+| `scripts/setup-databricks-secrets.sh` | Stores MCP credentials in Databricks secrets, derives connection name from `--env` flag |
 | `databrick_samples/neo4j-mcp-http-connection.ipynb` | Creates a Unity Catalog HTTP connection to the MCP server |
 | `databrick_samples/neo4j_mcp_agent.py` | LangGraph agent that queries Neo4j via the HTTP connection |
 | `databrick_samples/neo4j-mcp-agent-deploy.ipynb` | Tests, evaluates, and deploys the agent to a serving endpoint |
 
-## Quick Start
-
-### Prerequisites
-
-- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed and authenticated
-- [Docker](https://docs.docker.com/get-docker/) with buildx support
-- [Python 3.10+](https://www.python.org/downloads/) (for test client)
-- Azure subscription with Contributor access
-- Neo4j database (e.g., [Neo4j Aura](https://neo4j.com/cloud/aura/))
-
-### 1. Clone the Repositories
-
-```bash
-# Clone this deployment project
-git clone https://github.com/your-org/azure-neo4j-mcp.git
-cd azure-neo4j-mcp
-
-# Clone the forked Neo4j MCP server with HTTP streaming environment variable support
-git clone -b feat/http-env-credentials https://github.com/neo4j-partners/mcp.git ../mcp
-```
-
-**The Neo4j MCP Server Fork** The [neo4j-partners/mcp](https://github.com/neo4j-partners/mcp) fork on the `feat/http-env-credentials` branch adds features required for Azure Container Apps deployment:
-
-- **Environment variable authentication**: When running in HTTP streaming mode, the server uses `NEO4J_USERNAME` and `NEO4J_PASSWORD` environment variables to connect to Neo4j at startup. This enables fail-fast behavior where credential issues are detected immediately rather than on first request.
-- **Relaxed auth for protocol methods**: MCP handshake methods (`initialize`, `tools/list`) no longer require authentication, enabling platform health checks and capability discovery without credentials.
-
-### 2. Configure Environment
-
-**Automatic setup**
-
-```bash
-./scripts/setup-env.sh
-```
-
-This script will:
-- Detect your Azure subscription from `az` CLI
-- Set default resource group and location
-- Prompt for Neo4j connection details
-- Generate a secure random API key
-
-### 3. Deploy
-
-```bash
-./scripts/deploy.sh
-```
-
-This will:
-1. Deploy foundation infrastructure (ACR, Key Vault, Log Analytics)
-2. Build the Neo4j MCP server and auth proxy Docker images locally
-3. Push images to Azure Container Registry
-4. Deploy Container App with both containers
-5. Generate `MCP_ACCESS.json` with connection details
-
-### 4. Test the Deployment
-
-```bash
-./scripts/deploy.sh test
-```
-
-### 5. Use with AI Agents
-
-See the [samples/](./samples/) directory for complete agent implementations (samples have their own Azure AI Foundry infrastructure, separate from the MCP server):
-
-- **langgraph-mcp-agent** - LangGraph ReAct agent that connects to the MCP server using `langchain-mcp-adapters`. Uses Azure OpenAI (GPT-4o) with Azure CLI authentication. Simple CLI interface for interactive queries.
-- **sample-maf-agent** - Microsoft Agent Framework (MAF) samples using the [`agent-framework-neo4j`](https://github.com/neo4j-partners/neo4j-maf-provider) provider and [Neo4j context provider](https://github.com/neo4j-partners/neo4j-maf-provider). Creates a persistent `api-arches-agent` in Azure AI Foundry with support for fulltext, vector, and graph-enriched search strategies.
-
-### 6. Connect from Azure AI Foundry
-
-To add the MCP server as a tool in Azure AI Foundry, open the **Add Model Context Protocol tool** dialog and fill in the fields using values from `MCP_ACCESS.json`:
-
-| Field | Value |
-|-------|-------|
-| **Name** | Any name you like (e.g., `neo4j-mcp-server`) |
-| **Remote MCP Server endpoint** | Your `endpoint` value with `/mcp` appended (e.g., `https://neo4j-mcp-server.azurecontainerapps.io/mcp`) |
-| **Authentication** | `Key-based` |
-| **Credential key** | `Authorization` |
-| **Credential value** | `Bearer <your-api-key>` |
-
-> **Note:** The endpoint in `MCP_ACCESS.json` does not include the `/mcp` path — you must append it. The credential value must include the `Bearer ` prefix before the API key.
-
-### 7. Manual Access (Optional)
-
-After deployment, `MCP_ACCESS.json` contains everything needed to connect:
-
-```json
-{
-  "endpoint": "https://neo4j-mcp-server.azurecontainerapps.io",
-  "api_key": "<your-api-key>"
-}
-```
-
-**Example Request:**
-
-```bash
-curl -X POST https://your-endpoint.azurecontainerapps.io/mcp/v1/tools/call \
-  -H "Authorization: Bearer <MCP_API_KEY>" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "get-schema", "arguments": {}}'
-```
-
-
-### 8. Databricks Setup
-
-After deploying the MCP server:
-
-```bash
-# Store MCP credentials in Databricks secrets
-./scripts/setup-databricks-secrets.sh
-```
-
-Then import the notebooks into Databricks and follow the instructions in [databrick_samples/README.md](./databrick_samples/README.md).
-
-
-## Multiple Deployments
-
-All scripts support the `--env <file>` flag, allowing you to deploy multiple MCP servers in parallel — each connected to a different Neo4j database — without env files overwriting each other.
-
-### Setup
-
-Create a named env file for each deployment:
-
-```bash
-# "Movies" database deployment
-./scripts/setup-env.sh --env .env.movies
-
-# "Healthcare" database deployment
-./scripts/setup-env.sh --env .env.healthcare
-```
-
-Each env file must use a **unique `AZURE_RESOURCE_GROUP`** (and optionally a unique `BASE_NAME`) so the Azure resources don't collide. Edit each file after creation:
-
-```bash
-# .env.movies
-AZURE_RESOURCE_GROUP=neo4j-mcp-movies-rg
-BASE_NAME=mcpmovies
-NEO4J_URI=neo4j+s://movies.databases.neo4j.io
-...
-
-# .env.healthcare
-AZURE_RESOURCE_GROUP=neo4j-mcp-health-rg
-BASE_NAME=mcphealth
-NEO4J_URI=neo4j+s://health.databases.neo4j.io
-...
-```
-
-### Deploy and Manage
-
-```bash
-# Deploy each independently
-./scripts/deploy.sh --env .env.movies
-./scripts/deploy.sh --env .env.healthcare
-
-# Each produces its own access file:
-#   .env.movies     -> MCP_ACCESS.movies.json
-#   .env.healthcare -> MCP_ACCESS.healthcare.json
-
-# All commands accept --env
-./scripts/deploy.sh --env .env.movies status
-./scripts/deploy.sh --env .env.movies redeploy
-./scripts/logs.sh --env .env.healthcare 50
-./scripts/cleanup.sh --env .env.movies
-```
-
-When `--env` is omitted, all scripts default to `.env` and `MCP_ACCESS.json` (unchanged from previous behavior).
-
 ## Commands
 
-All commands below accept an optional `--env <file>` flag (e.g., `--env .env.movies`). When omitted, the default `.env` file is used.
+All commands below accept an optional `--env <file>` flag (e.g., `--env .env.manufacturing`). When omitted, the default `.env` file is used.
 
 ### Deployment
 
@@ -317,6 +378,13 @@ All commands below accept an optional `--env <file>` flag (e.g., `--env .env.mov
 | `./scripts/deploy.sh infra` | Deploy Bicep infrastructure only |
 | `./scripts/deploy.sh status` | Show deployment status and outputs |
 | `./scripts/deploy.sh test` | Run test client to validate |
+
+### Databricks
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/setup-databricks-secrets.sh` | Store MCP credentials in Databricks secrets (`neo4j_mcp_server`) |
+| `./scripts/setup-databricks-secrets.sh --env .env.manufacturing` | Store credentials with derived name (`manufacturing_mcp_server`) |
 
 ### Cleanup
 
@@ -363,9 +431,14 @@ azure-neo4j-mcp/
 │   │   └── Dockerfile              # Auth proxy container image
 │   ├── _common.sh                  # Shared helpers (--env flag, path resolution)
 │   ├── setup-env.sh                # Environment setup script
+│   ├── setup-databricks-secrets.sh # Databricks secrets and connection naming
 │   ├── deploy.sh                   # Deployment script
 │   ├── cleanup.sh                  # Resource cleanup script
 │   └── logs.sh                     # View MCP server logs
+├── databrick_samples/
+│   ├── neo4j-mcp-http-connection.ipynb  # HTTP connection setup notebook
+│   ├── neo4j_mcp_agent.py              # LangGraph agent code
+│   └── neo4j-mcp-agent-deploy.ipynb    # Agent deployment notebook
 ├── client/
 │   ├── test_client.py              # Deployment validation client
 │   └── requirements.txt            # Python dependencies (stdlib only)
@@ -403,8 +476,9 @@ azure-neo4j-mcp/
 
 ### Authentication & Authorization
 - **API Key Authentication**: All requests require `Authorization: Bearer <KEY>` or `X-API-Key` header
+- **URL-safe API Keys**: Generated with URL-safe base64 (no `/`, `+`, or `=`) for compatibility with HTTP proxies like Databricks
 - **Managed Identity**: Passwordless authentication to ACR and Key Vault
-- **Key Vault RBAC**: Secrets accessed via role-based access control, no access policies
+- **Key Vault RBAC**: Secrets accessed via role-based access control, not access policies
 
 ### Request Protection
 - **Rate Limiting**: 10 requests per second per IP address (configurable)
