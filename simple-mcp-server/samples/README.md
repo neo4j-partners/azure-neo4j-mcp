@@ -47,7 +47,7 @@ From the `samples/` directory:
 az login
 azd auth login
 
-# Deploy AI Services (gpt-4o + text-embedding-ada-002)
+# Deploy AI Services (gpt-4o + text-embedding-3-small)
 azd up
 
 # Sync environment variables (Azure AI + MCP from MCP_ACCESS.json)
@@ -67,6 +67,12 @@ uv run python simple-agent.py
 
 # Or ask a specific question
 uv run python simple-agent.py "How many nodes are in the database?"
+
+# Test vector embedding search via MCP
+uv run python test-vector-search.py
+
+# Or with a custom query
+uv run python test-vector-search.py "What are the financial risks?"
 ```
 
 #### Microsoft Agent Framework (MAF) Sample
@@ -98,6 +104,8 @@ This sample demonstrates how to build a conversational AI agent using LangGraph 
 The agent uses a ReAct (Reasoning and Acting) pattern, which means it can reason about what tools to use, execute them, observe the results, and continue reasoning until it has enough information to answer your question. When you ask the agent a question about your graph data, it automatically discovers available MCP tools, selects the appropriate ones, and executes Cypher queries against your Neo4j database.
 
 The sample uses Azure OpenAI's GPT-4o model for the language model and connects to the MCP server using LangChain's MCP adapter library. Authentication is handled through the Azure CLI, so you don't need to manage API keys separately.
+
+The sample also includes a **vector embedding search test** (`test-vector-search.py`) that verifies end-to-end vector search through the MCP server. It generates an embedding using Azure OpenAI's text-embedding-3-small model and executes a vector similarity search against the Neo4j `chunkEmbeddings` index via the MCP server's `read-cypher` tool.
 
 This is a good starting point if you want to understand the basics of connecting an LLM to the Neo4j MCP server, or if you prefer using the LangChain/LangGraph ecosystem.
 
@@ -156,7 +164,7 @@ samples/
 | Azure AI Services | Hosts model deployments |
 | Azure AI Project | Manages serverless endpoints |
 | GPT-4o Deployment | Chat completion model |
-| text-embedding-ada-002 | Embedding model |
+| text-embedding-3-small | Embedding model |
 | Storage Account | Required by AI Services |
 
 ### Supported Regions

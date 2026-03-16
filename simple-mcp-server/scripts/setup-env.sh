@@ -20,8 +20,12 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="$PROJECT_ROOT/.env"
 ENV_SAMPLE="$PROJECT_ROOT/.env.sample"
+
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh"
+
+# ENV_FILE is set by resolve_env_file() in main()
 
 # Defaults
 DEFAULT_RESOURCE_GROUP="neo4j-mcp-demo-rg"
@@ -396,6 +400,8 @@ USAGE:
     ./scripts/setup-env.sh [OPTIONS]
 
 OPTIONS:
+    --env <file>         Use a named env file (default: .env)
+                         Enables parallel deployments to different Neo4j instances.
     --non-interactive    Use defaults without prompting
     --help               Show this help message
 
@@ -405,6 +411,10 @@ EXAMPLES:
 
     # Non-interactive mode (uses defaults, skips Neo4j prompts)
     ./scripts/setup-env.sh --non-interactive
+
+    # Create separate env files for parallel deployments
+    ./scripts/setup-env.sh --env .env.movies
+    ./scripts/setup-env.sh --env .env.healthcare
 
 BEHAVIOR:
     - Azure subscription ID is always updated from current az context
@@ -426,22 +436,35 @@ EOF
 main() {
     # Parse arguments
     NON_INTERACTIVE="false"
-    for arg in "$@"; do
-        case "$arg" in
+    local env_arg=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env)
+                env_arg="${2:-}"
+                if [[ -z "$env_arg" ]]; then
+                    log_error "--env requires a filename argument (e.g., --env .env.movies)"
+                    exit 1
+                fi
+                shift 2
+                ;;
             --non-interactive)
                 NON_INTERACTIVE="true"
+                shift
                 ;;
             --help|-h)
                 show_help
                 exit 0
                 ;;
             *)
-                log_error "Unknown option: $arg"
+                log_error "Unknown option: $1"
                 show_help
                 exit 1
                 ;;
         esac
     done
+
+    # Resolve env file path
+    resolve_env_file "${env_arg:-.env}"
 
     echo ""
     echo "======================================================================"

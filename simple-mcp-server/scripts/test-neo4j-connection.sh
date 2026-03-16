@@ -26,7 +26,27 @@ fi
 
 # Determine script directory and load .env
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/../.env"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh"
+
+# Parse --env flag
+env_arg=""
+remaining_args=()
+for arg in "$@"; do
+    if [[ "$prev_was_env" == "true" ]]; then
+        env_arg="$arg"
+        prev_was_env="false"
+        continue
+    fi
+    if [[ "$arg" == "--env" ]]; then
+        prev_was_env="true"
+        continue
+    fi
+    remaining_args+=("$arg")
+done
+resolve_env_file "${env_arg:-.env}"
 
 if [[ -f "$ENV_FILE" ]]; then
     echo "Loading environment from: $ENV_FILE"

@@ -27,9 +27,9 @@ param chatDeploymentCapacity int = 20
 
 // Embedding model
 @description('Name of the embedding model to deploy')
-param embeddingModelName string = 'text-embedding-ada-002'
+param embeddingModelName string = 'text-embedding-3-small'
 @description('Version of the embedding model to deploy')
-param embeddingModelVersion string = '2'
+param embeddingModelVersion string = '1'
 @description('SKU for the embedding deployment')
 param embeddingDeploymentSku string = 'GlobalStandard'
 @description('Capacity for the embedding deployment')

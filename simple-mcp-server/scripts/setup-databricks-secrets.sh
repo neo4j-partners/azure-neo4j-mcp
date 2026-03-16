@@ -23,9 +23,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh"
+
+# Parse --env flag and positional args
+env_arg=""
+positional_args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env)
+            env_arg="${2:-}"
+            shift 2
+            ;;
+        *)
+            positional_args+=("$1")
+            shift
+            ;;
+    esac
+done
+resolve_env_file "${env_arg:-.env}"
+
 # Configuration
-SCOPE_NAME="${1:-mcp-neo4j-secrets}"
-MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
+SCOPE_NAME="${positional_args[0]:-mcp-neo4j-secrets}"
 
 # Colors for output
 RED='\033[0;31m'

@@ -25,8 +25,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INFRA_DIR="$PROJECT_ROOT/infra"
-ENV_FILE="$PROJECT_ROOT/.env"
-MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
+
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh"
+
+# ENV_FILE and MCP_ACCESS_FILE are set by resolve_env_file() in main()
 
 # Default values (can be overridden by .env)
 DEFAULT_RESOURCE_GROUP="neo4j-mcp-demo-rg"
@@ -848,7 +851,12 @@ cmd_help() {
 Neo4j MCP Server - Azure Deployment Script
 
 USAGE:
-    ./scripts/deploy.sh [COMMAND]
+    ./scripts/deploy.sh [--env <file>] [COMMAND]
+
+OPTIONS:
+    --env <file>      Use a named env file (default: .env)
+                      Enables parallel deployments to different Neo4j instances.
+                      Each env file gets its own MCP_ACCESS.<name>.json output.
 
 COMMANDS:
     (none)            Full deployment (infra + build + push + deploy)
@@ -881,14 +889,15 @@ EXAMPLES:
     # Rebuild and redeploy after code changes
     ./scripts/deploy.sh redeploy
 
-    # Check version info (local vs deployed)
-    ./scripts/deploy.sh version
+    # Deploy multiple MCP servers in parallel using named env files
+    ./scripts/setup-env.sh --env .env.movies
+    ./scripts/deploy.sh --env .env.movies
 
-    # Check deployment status
-    ./scripts/deploy.sh status
+    ./scripts/setup-env.sh --env .env.healthcare
+    ./scripts/deploy.sh --env .env.healthcare
 
-    # Run tests
-    ./scripts/deploy.sh test
+    # Check status of a named deployment
+    ./scripts/deploy.sh --env .env.movies status
 
     # Clean up resources
     ./scripts/deploy.sh cleanup
@@ -901,7 +910,30 @@ EOF
 # =============================================================================
 
 main() {
-    local command="${1:-deploy}"
+    # Extract --env flag before processing command
+    local env_arg=""
+    local remaining_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env)
+                env_arg="${2:-}"
+                if [[ -z "$env_arg" ]]; then
+                    log_error "--env requires a filename argument (e.g., --env .env.movies)"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            *)
+                remaining_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Resolve env file and MCP_ACCESS file paths
+    resolve_env_file "${env_arg:-.env}"
+
+    local command="${remaining_args[0]:-deploy}"
 
     # Load environment (except for help)
     if [[ "$command" != "help" && "$command" != "--help" && "$command" != "-h" ]]; then

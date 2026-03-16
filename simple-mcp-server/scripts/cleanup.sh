@@ -20,8 +20,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="$PROJECT_ROOT/.env"
-MCP_ACCESS_FILE="$PROJECT_ROOT/MCP_ACCESS.json"
+
+# shellcheck source=_common.sh
+source "$SCRIPT_DIR/_common.sh"
+
+# ENV_FILE and MCP_ACCESS_FILE are set by resolve_env_file() in main()
 
 # =============================================================================
 # Helper Functions
@@ -354,6 +357,7 @@ USAGE:
     ./scripts/cleanup.sh [OPTIONS]
 
 OPTIONS:
+    --env <file>    Use a named env file (default: .env)
     --interactive   Prompt for confirmation before deleting (default: no prompts)
     --wait          Wait for deletion to complete and purge Key Vault (default: no wait)
     --local-only    Only clean local generated files (no Azure changes)
@@ -364,6 +368,9 @@ OPTIONS:
 EXAMPLES:
     # Fast cleanup (default: no prompts, no waiting)
     ./scripts/cleanup.sh
+
+    # Cleanup a named deployment
+    ./scripts/cleanup.sh --env .env.movies
 
     # Interactive cleanup with prompts
     ./scripts/cleanup.sh --interactive
@@ -409,43 +416,62 @@ main() {
     IMAGES_ONLY="false"
     CLEAN_DOCKER="false"
 
-    for arg in "$@"; do
-        case "$arg" in
+    local env_arg=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env)
+                env_arg="${2:-}"
+                if [[ -z "$env_arg" ]]; then
+                    log_error "--env requires a filename argument (e.g., --env .env.movies)"
+                    exit 1
+                fi
+                shift 2
+                ;;
             --force|-f)
                 FORCE="true"
+                shift
                 ;;
             --interactive|-i)
                 # Override default: prompt for confirmation
                 FORCE="false"
+                shift
                 ;;
             --no-wait|-n)
                 NO_WAIT="true"
+                shift
                 ;;
             --wait|-w)
                 # Override default: wait for deletion and purge Key Vault
                 NO_WAIT="false"
+                shift
                 ;;
             --local-only|-l)
                 LOCAL_ONLY="true"
+                shift
                 ;;
             --images-only)
                 IMAGES_ONLY="true"
+                shift
                 ;;
             --docker|-d)
                 CLEAN_DOCKER="true"
+                shift
                 ;;
             --help|-h)
                 show_help
                 exit 0
                 ;;
             *)
-                log_error "Unknown option: $arg"
+                log_error "Unknown option: $1"
                 echo ""
                 show_help
                 exit 1
                 ;;
         esac
     done
+
+    # Resolve env file and MCP_ACCESS file paths
+    resolve_env_file "${env_arg:-.env}"
 
     echo ""
     echo "======================================================================"

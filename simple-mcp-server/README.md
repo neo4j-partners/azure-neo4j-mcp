@@ -251,7 +251,61 @@ After deploying the MCP server:
 Then import the notebooks into Databricks and follow the instructions in [databrick_samples/README.md](./databrick_samples/README.md).
 
 
+## Multiple Deployments
+
+All scripts support the `--env <file>` flag, allowing you to deploy multiple MCP servers in parallel — each connected to a different Neo4j database — without env files overwriting each other.
+
+### Setup
+
+Create a named env file for each deployment:
+
+```bash
+# "Movies" database deployment
+./scripts/setup-env.sh --env .env.movies
+
+# "Healthcare" database deployment
+./scripts/setup-env.sh --env .env.healthcare
+```
+
+Each env file must use a **unique `AZURE_RESOURCE_GROUP`** (and optionally a unique `BASE_NAME`) so the Azure resources don't collide. Edit each file after creation:
+
+```bash
+# .env.movies
+AZURE_RESOURCE_GROUP=neo4j-mcp-movies-rg
+BASE_NAME=mcpmovies
+NEO4J_URI=neo4j+s://movies.databases.neo4j.io
+...
+
+# .env.healthcare
+AZURE_RESOURCE_GROUP=neo4j-mcp-health-rg
+BASE_NAME=mcphealth
+NEO4J_URI=neo4j+s://health.databases.neo4j.io
+...
+```
+
+### Deploy and Manage
+
+```bash
+# Deploy each independently
+./scripts/deploy.sh --env .env.movies
+./scripts/deploy.sh --env .env.healthcare
+
+# Each produces its own access file:
+#   .env.movies     -> MCP_ACCESS.movies.json
+#   .env.healthcare -> MCP_ACCESS.healthcare.json
+
+# All commands accept --env
+./scripts/deploy.sh --env .env.movies status
+./scripts/deploy.sh --env .env.movies redeploy
+./scripts/logs.sh --env .env.healthcare 50
+./scripts/cleanup.sh --env .env.movies
+```
+
+When `--env` is omitted, all scripts default to `.env` and `MCP_ACCESS.json` (unchanged from previous behavior).
+
 ## Commands
+
+All commands below accept an optional `--env <file>` flag (e.g., `--env .env.movies`). When omitted, the default `.env` file is used.
 
 ### Deployment
 
@@ -307,6 +361,7 @@ azure-neo4j-mcp/
 │   ├── nginx/
 │   │   ├── nginx.conf              # OpenResty/Lua auth proxy config
 │   │   └── Dockerfile              # Auth proxy container image
+│   ├── _common.sh                  # Shared helpers (--env flag, path resolution)
 │   ├── setup-env.sh                # Environment setup script
 │   ├── deploy.sh                   # Deployment script
 │   ├── cleanup.sh                  # Resource cleanup script
