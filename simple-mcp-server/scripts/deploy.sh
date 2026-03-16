@@ -653,9 +653,9 @@ cmd_test() {
         exit 1
     fi
 
-    # Run test client
+    # Run test client (pass MCP_ACCESS_FILE so it finds the right config)
     cd "$PROJECT_ROOT"
-    python3 "$test_client"
+    MCP_ACCESS_FILE="$MCP_ACCESS_FILE" python3 "$test_client"
 
     log_success "Tests completed"
 }

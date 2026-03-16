@@ -64,14 +64,26 @@ def print_info(text: str) -> None:
 
 
 def load_config() -> dict:
-    """Load configuration from MCP_ACCESS.json."""
+    """Load configuration from MCP_ACCESS.json (or path in MCP_ACCESS_FILE env var)."""
     # Find project root (parent of client directory)
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
-    config_file = project_root / "MCP_ACCESS.json"
 
-    # Also check if there's a .env file to get API key
-    env_file = project_root / ".env"
+    # Use MCP_ACCESS_FILE env var if set, otherwise default to MCP_ACCESS.json
+    access_file_env = os.environ.get("MCP_ACCESS_FILE")
+    if access_file_env:
+        config_file = Path(access_file_env)
+    else:
+        config_file = project_root / "MCP_ACCESS.json"
+
+    # Derive .env file from MCP_ACCESS filename
+    # MCP_ACCESS.json -> .env, MCP_ACCESS.manufacturing.json -> .env.manufacturing
+    config_stem = config_file.stem  # e.g. "MCP_ACCESS.manufacturing" or "MCP_ACCESS"
+    parts = config_stem.split(".", 1)
+    if len(parts) > 1:
+        env_file = project_root / f".env.{parts[1]}"
+    else:
+        env_file = project_root / ".env"
     api_key_from_env = None
 
     if env_file.exists():
@@ -340,7 +352,8 @@ def main():
     print_header("Neo4j MCP Server - Deployment Validation")
 
     # Load configuration
-    print_info("Loading configuration from MCP_ACCESS.json...")
+    access_file = os.environ.get("MCP_ACCESS_FILE", "MCP_ACCESS.json")
+    print_info(f"Loading configuration from {Path(access_file).name}...")
     config = load_config()
 
     endpoint = config.get("endpoint", "")
