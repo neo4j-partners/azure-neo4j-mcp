@@ -76,12 +76,14 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Generate a random API key (32 bytes, base64 encoded = 44 chars)
+# Generate a random API key (32 bytes, URL-safe base64 encoded)
+# Uses URL-safe alphabet (- and _ instead of + and /) with no padding (=)
+# to avoid issues with HTTP proxies and clients that URL-encode bearer tokens
 generate_api_key() {
     if command_exists openssl; then
-        openssl rand -base64 32
+        openssl rand -base64 32 | tr '/+' '_-' | tr -d '='
     elif [[ -f /dev/urandom ]]; then
-        head -c 32 /dev/urandom | base64
+        head -c 32 /dev/urandom | base64 | tr '/+' '_-' | tr -d '='
     else
         # Fallback: use $RANDOM (less secure but works everywhere)
         echo "$(date +%s%N)$RANDOM$RANDOM$RANDOM" | sha256sum | head -c 44
@@ -521,6 +523,14 @@ main() {
         needs_manual=true
     fi
 
+    # Build the --env flag for display if using a non-default env file
+    local env_flag=""
+    local env_basename
+    env_basename=$(basename "$ENV_FILE")
+    if [[ "$env_basename" != ".env" ]]; then
+        env_flag=" --env $env_basename"
+    fi
+
     if [[ "$needs_manual" == "true" ]]; then
         echo ""
         log_info "Edit $ENV_FILE to complete configuration"
@@ -529,7 +539,7 @@ main() {
         echo ""
         log_info "Next steps:"
         log_info "  1. Review settings: cat $ENV_FILE"
-        log_info "  2. Deploy: ./scripts/deploy.sh"
+        log_info "  2. Deploy: ./scripts/deploy.sh${env_flag}"
     fi
 
     echo ""

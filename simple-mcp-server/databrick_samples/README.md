@@ -217,20 +217,30 @@ The `neo4j-mcp-http-connection.ipynb` notebook demonstrates how to create a Data
 
 Choose one of the following options to create the HTTP connection:
 
-#### Option 1: Manual Setup via Catalog Explorer 
+#### Option 1: Manual Setup via Catalog Explorer
 
-Use the `MCP_ACCESS.json` file in the project root to manually configure the connection in Databricks:
+Use the `MCP_ACCESS.json` (or `MCP_ACCESS.<name>.json`) file in the project root to manually configure the connection in Databricks.
+
+**Connection naming convention:**
+
+| Env File | MCP_ACCESS File | Connection Name |
+|----------|----------------|-----------------|
+| `.env` | `MCP_ACCESS.json` | `neo4j_mcp_server` |
+| `.env.manufacturing` | `MCP_ACCESS.manufacturing.json` | `manufacturing_mcp_server` |
+| `.env.finance` | `MCP_ACCESS.finance.json` | `finance_mcp_server` |
+
+**Steps:**
 
 1. In your Databricks workspace, navigate to **Catalog** > **External Data** > **Connections**
 2. Click **Create connection**
-3. Enter a connection name (e.g., `neo4j_mcp`)
+3. Enter the connection name following the convention above (e.g., `manufacturing_mcp_server`)
 4. Select **HTTP** as the connection type
 5. Configure authentication:
-   - **Host**: Use the `endpoint` value from `MCP_ACCESS.json`
+   - **Host**: Use the `endpoint` value from `MCP_ACCESS.<name>.json`
    - **Authentication type**: Bearer Token
-   - **Bearer Token**: Use the `api_key` value from `MCP_ACCESS.json`
+   - **Bearer Token**: Use the `api_key` value from `MCP_ACCESS.<name>.json`
 6. Configure connection details:
-   - **Base path**: Leave as `/`
+   - **Base path**: Use the `mcp_path` value from `MCP_ACCESS.<name>.json` (typically `/mcp`)
    - **Is MCP connection**: Check this box to enable MCP functionality
 7. Click **Create connection**
 
@@ -245,17 +255,23 @@ For detailed instructions, see:
 From your local machine (where `MCP_ACCESS.json` exists):
 
 ```bash
-# Run the setup script
+# Default deployment (.env -> MCP_ACCESS.json -> neo4j_mcp_server)
 ./scripts/setup-databricks-secrets.sh
+
+# Named deployment (.env.manufacturing -> MCP_ACCESS.manufacturing.json -> manufacturing_mcp_server)
+./scripts/setup-databricks-secrets.sh --env .env.manufacturing
+
+# Named deployment with custom scope
+./scripts/setup-databricks-secrets.sh --env .env.finance my-finance-scope
 ```
 
-This reads the MCP server credentials from `MCP_ACCESS.json` and stores them securely in Databricks secrets.
+The script reads credentials from the corresponding `MCP_ACCESS.<name>.json`, derives the connection name automatically, and stores everything as Databricks secrets (including the connection name).
 
 **Step 2: Import and Run the Notebook**
 
 1. Import `neo4j-mcp-http-connection.ipynb` into your Databricks workspace
 2. Attach it to a cluster running Databricks Runtime 15.4 LTS or later
-3. Update the configuration cell with your secret scope name (default: `mcp-neo4j-secrets`)
+3. Update the configuration cell with your secret scope name (default: `mcp-neo4j-secrets`) and connection name
 4. Run all cells to create the connection and test it
 
 **Step 3: Enable MCP Connection**
@@ -265,12 +281,12 @@ The notebook creates an HTTP connection, but you must manually enable MCP functi
 1. In the Databricks sidebar, click **Catalog**
 2. Click on the gear icon and then **Connect** -> **Connections**
 3. Select the **Connections** tab
-4. Click on your connection name (e.g., `neo4j_azure_beta_mcp`)
+4. Click on your connection name (e.g., `manufacturing_mcp_server`)
 5. Click the **three-dot menu** (⋮) in the top right and select **Edit**
-6. In **Authentication**, re-enter the Bearer Token (use `api_key` from `MCP_ACCESS.json`)
+6. In **Authentication**, re-enter the Bearer Token (use `api_key` from `MCP_ACCESS.<name>.json`)
 7. Click **Next** to proceed to **Connection details**
 8. Check the **Is MCP connection** box
-9. Leave **Base path** as `/`
+9. Set **Base path** to match `mcp_path` from `MCP_ACCESS.<name>.json` (typically `/mcp`)
 10. Click **Update** to save
 
 ### What the Notebook Does
@@ -295,16 +311,16 @@ This integration provides **read-only access** to Neo4j. The MCP server is deplo
 
 ### Example Usage
 
-After running the setup notebook, you can query Neo4j from any notebook:
+After running the setup notebook, you can query Neo4j from any notebook. Replace the connection name with your deployment's name (e.g., `manufacturing_mcp_server`):
 
 ```python
 # Using the helper function
 result = query_neo4j("MATCH (n:Person) RETURN n.name LIMIT 10")
 
-# Or directly with SQL
+# Or directly with SQL (replace connection name for your deployment)
 spark.sql("""
     SELECT http_request(
-      conn => 'neo4j_mcp',
+      conn => 'manufacturing_mcp_server',
       method => 'POST',
       path => '/',
       headers => map('Content-Type', 'application/json'),
@@ -317,10 +333,18 @@ spark.sql("""
 
 | Issue | Solution |
 |-------|----------|
-| Secret not found | Run `./scripts/setup-databricks-secrets.sh` |
-| Connection already exists | Drop it with `DROP CONNECTION IF EXISTS neo4j_mcp` |
+| Secret not found | Run `./scripts/setup-databricks-secrets.sh --env .env.<name>` |
+| Connection already exists | Drop it with `DROP CONNECTION IF EXISTS <connection_name>` |
 | HTTP timeout | Verify MCP server is running |
-| 401 Unauthorized | Re-run setup script to refresh API key |
+| 401 Unauthorized | API key may contain `/`, `+`, or `=` characters that Databricks URL-encodes. Redeploy to generate a URL-safe key (see below) |
+
+**API Key 401 errors:** The MCP API key is generated using URL-safe base64 (no `/`, `+`, or `=` characters) to avoid issues with HTTP proxies that URL-encode bearer tokens. If you have an older deployment with a standard base64 key, redeploy to regenerate:
+
+```bash
+./scripts/deploy.sh --env .env.<name> redeploy
+```
+
+Then update the bearer token in the Databricks connection with the new `api_key` from `MCP_ACCESS.<name>.json`.
 
 ## Neo4j MCP Agent
 
@@ -390,7 +414,7 @@ Edit `neo4j_mcp_agent.py` to customize:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `LLM_ENDPOINT_NAME` | Databricks LLM endpoint | `databricks-claude-3-7-sonnet` |
-| `CONNECTION_NAME` | HTTP connection name | `neo4j_azure_beta_mcp` |
+| `CONNECTION_NAME` | HTTP connection name (e.g., `manufacturing_mcp_server`) | `neo4j_mcp_server` |
 | `SECRET_SCOPE` | Secrets scope name | `mcp-neo4j-secrets` |
 | `system_prompt` | Agent instructions | Neo4j query assistant |
 
