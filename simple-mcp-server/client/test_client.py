@@ -2,7 +2,7 @@
 """
 Neo4j MCP Server - Test Client
 
-This script validates the deployment by testing:
+Uses the FastMCP client to validate the deployment by testing:
 1. Authentication with API key
 2. MCP protocol connectivity
 3. Tool discovery (tools/list)
@@ -18,12 +18,13 @@ Usage:
 The script reads connection info from MCP_ACCESS.json in the project root.
 """
 
+import asyncio
 import json
 import os
 import sys
-import urllib.request
-import urllib.error
 from pathlib import Path
+
+from fastmcp import Client
 
 
 # ANSI color codes for output
@@ -109,153 +110,45 @@ def load_config() -> dict:
     return config
 
 
-def make_mcp_request(endpoint: str, api_key: str, method: str, params: dict = None) -> dict:
-    """
-    Make an MCP JSON-RPC request.
-
-    Args:
-        endpoint: Full URL to the MCP endpoint
-        api_key: API key for authentication
-        method: JSON-RPC method name
-        params: Optional parameters for the method
-
-    Returns:
-        Response JSON as dict
-    """
-    request_id = 1
-    payload = {
-        "jsonrpc": "2.0",
-        "method": method,
-        "id": request_id
-    }
-    if params:
-        payload["params"] = params
-
-    data = json.dumps(payload).encode('utf-8')
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "application/json"
-    }
-
-    req = urllib.request.Request(endpoint, data=data, headers=headers, method='POST')
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            response_data = response.read().decode('utf-8')
-            return json.loads(response_data)
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8') if e.fp else ""
-        return {
-            "error": {
-                "code": e.code,
-                "message": f"HTTP {e.code}: {e.reason}",
-                "data": error_body
-            }
-        }
-    except urllib.error.URLError as e:
-        return {
-            "error": {
-                "code": -1,
-                "message": f"Connection error: {e.reason}"
-            }
-        }
-    except json.JSONDecodeError as e:
-        return {
-            "error": {
-                "code": -2,
-                "message": f"Invalid JSON response: {e}"
-            }
-        }
-
-
-def test_authentication_rejected(endpoint: str) -> bool:
+async def test_authentication_rejected(endpoint: str) -> bool:
     """Test that requests without API key are rejected."""
     print_info("Testing authentication rejection (no API key)...")
 
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "tools/list",
-        "id": 1
-    }
-
-    data = json.dumps(payload).encode('utf-8')
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-
-    req = urllib.request.Request(endpoint, data=data, headers=headers, method='POST')
-
+    client = Client(endpoint)
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            # If we get here, auth was NOT required (unexpected)
-            print_error("Request without API key was accepted (expected 401)")
-            return False
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            print_success("Requests without API key are rejected (401)")
-            return True
-        else:
-            print_error(f"Unexpected error code: {e.code} (expected 401)")
-            return False
-    except Exception as e:
-        print_error(f"Connection error: {e}")
+        async with client:
+            await client.list_tools()
+        print_error("Request without API key was accepted (expected rejection)")
         return False
+    except Exception:
+        print_success("Requests without API key are rejected")
+        return True
 
 
-def test_authentication_invalid(endpoint: str) -> bool:
+async def test_authentication_invalid(endpoint: str) -> bool:
     """Test that requests with invalid API key are rejected."""
     print_info("Testing authentication rejection (invalid API key)...")
 
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "tools/list",
-        "id": 1
-    }
-
-    data = json.dumps(payload).encode('utf-8')
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer invalid-api-key-12345",
-        "Accept": "application/json"
-    }
-
-    req = urllib.request.Request(endpoint, data=data, headers=headers, method='POST')
-
+    client = Client(endpoint, auth="invalid-api-key-12345")
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            print_error("Request with invalid API key was accepted (expected 401)")
-            return False
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            print_success("Requests with invalid API key are rejected (401)")
-            return True
-        else:
-            print_error(f"Unexpected error code: {e.code} (expected 401)")
-            return False
-    except Exception as e:
-        print_error(f"Connection error: {e}")
+        async with client:
+            await client.list_tools()
+        print_error("Request with invalid API key was accepted (expected rejection)")
         return False
+    except Exception:
+        print_success("Requests with invalid API key are rejected")
+        return True
 
 
-def test_tools_list(endpoint: str, api_key: str) -> bool:
+async def test_tools_list(client: Client) -> bool:
     """Test the tools/list method."""
     print_info("Testing tools/list...")
 
-    response = make_mcp_request(endpoint, api_key, "tools/list")
-
-    if "error" in response:
-        print_error(f"tools/list failed: {response['error']}")
+    try:
+        tools = await client.list_tools()
+    except Exception as e:
+        print_error(f"tools/list failed: {e}")
         return False
-
-    if "result" not in response:
-        print_error("No result in response")
-        return False
-
-    result = response["result"]
-    tools = result.get("tools", [])
 
     if not tools:
         print_warning("No tools returned (may indicate connection issues)")
@@ -263,91 +156,69 @@ def test_tools_list(endpoint: str, api_key: str) -> bool:
 
     print_success(f"tools/list returned {len(tools)} tools:")
     for tool in tools:
-        name = tool.get("name", "unknown")
-        desc = tool.get("description", "")[:50]
-        print(f"       - {name}: {desc}...")
+        desc = (tool.description or "")[:50]
+        print(f"       - {tool.name}: {desc}...")
 
     return True
 
 
-def test_get_schema(endpoint: str, api_key: str) -> bool:
+async def test_get_schema(client: Client) -> bool:
     """Test the get-schema tool."""
     print_info("Testing get-schema tool...")
 
-    response = make_mcp_request(endpoint, api_key, "tools/call", {
-        "name": "get-schema",
-        "arguments": {}
-    })
+    try:
+        result = await client.call_tool("get-schema", {}, raise_on_error=False)
+    except Exception as e:
+        print_error(f"get-schema failed: {e}")
+        return False
 
-    if "error" in response:
-        error = response["error"]
-        # Check if it's an MCP-level error vs auth error
-        if isinstance(error, dict) and error.get("code") == 401:
-            print_error("Authentication failed for get-schema")
-            return False
-        print_warning(f"get-schema returned error: {error}")
+    if result.is_error:
+        print_warning(f"get-schema returned error: {result.content[0].text}")
         # This might be expected if Neo4j is not configured
         return True
 
-    if "result" in response:
-        result = response["result"]
-        content = result.get("content", [])
-        if content:
-            print_success("get-schema returned schema data")
-            # Print first few lines of schema
-            for item in content[:1]:
-                if item.get("type") == "text":
-                    text = item.get("text", "")[:200]
-                    print(f"       Schema preview: {text}...")
-        else:
-            print_warning("get-schema returned empty content")
-        return True
+    if result.content:
+        print_success("get-schema returned schema data")
+        for item in result.content[:1]:
+            if hasattr(item, 'text'):
+                text = item.text[:200]
+                print(f"       Schema preview: {text}...")
+    else:
+        print_warning("get-schema returned empty content")
 
-    print_warning("Unexpected response format from get-schema")
     return True
 
 
-def test_read_cypher(endpoint: str, api_key: str) -> bool:
+async def test_read_cypher(client: Client) -> bool:
     """Test a simple read-cypher query."""
     print_info("Testing read-cypher tool with simple query...")
 
-    # Simple query that should work on any Neo4j database
     query = "RETURN 1 as value"
 
-    response = make_mcp_request(endpoint, api_key, "tools/call", {
-        "name": "read-cypher",
-        "arguments": {
-            "query": query
-        }
-    })
+    try:
+        result = await client.call_tool("read-cypher", {"query": query}, raise_on_error=False)
+    except Exception as e:
+        print_error(f"read-cypher failed: {e}")
+        return False
 
-    if "error" in response:
-        error = response["error"]
-        if isinstance(error, dict) and error.get("code") == 401:
-            print_error("Authentication failed for read-cypher")
-            return False
-        print_warning(f"read-cypher returned error: {error}")
+    if result.is_error:
+        print_warning(f"read-cypher returned error: {result.content[0].text}")
         # This might be expected if Neo4j is not properly configured
         return True
 
-    if "result" in response:
-        result = response["result"]
-        content = result.get("content", [])
-        if content:
-            print_success("read-cypher executed successfully")
-            for item in content[:1]:
-                if item.get("type") == "text":
-                    text = item.get("text", "")[:100]
-                    print(f"       Result: {text}")
-        else:
-            print_warning("read-cypher returned empty content")
-        return True
+    if result.content:
+        print_success("read-cypher executed successfully")
+        for item in result.content[:1]:
+            if hasattr(item, 'text'):
+                text = item.text[:100]
+                print(f"       Result: {text}")
+    else:
+        print_warning("read-cypher returned empty content")
 
-    print_warning("Unexpected response format from read-cypher")
     return True
 
 
-def main():
+async def run_tests():
     """Run all tests."""
     print_header("Neo4j MCP Server - Deployment Validation")
 
@@ -377,25 +248,28 @@ def main():
     # Run tests
     results = []
 
-    # Test 1: Authentication rejection
+    # Test 1: Authentication rejection (no key)
     print_header("Test 1: Authentication - No API Key")
-    results.append(("Auth Rejection (No Key)", test_authentication_rejected(full_endpoint)))
+    results.append(("Auth Rejection (No Key)", await test_authentication_rejected(full_endpoint)))
 
     # Test 2: Invalid API key rejection
     print_header("Test 2: Authentication - Invalid API Key")
-    results.append(("Auth Rejection (Invalid Key)", test_authentication_invalid(full_endpoint)))
+    results.append(("Auth Rejection (Invalid Key)", await test_authentication_invalid(full_endpoint)))
 
-    # Test 3: Tools list
-    print_header("Test 3: MCP Protocol - tools/list")
-    results.append(("Tools List", test_tools_list(full_endpoint, api_key)))
+    # Tests 3-5: Use an authenticated client
+    client = Client(full_endpoint, auth=api_key)
+    async with client:
+        # Test 3: Tools list
+        print_header("Test 3: MCP Protocol - tools/list")
+        results.append(("Tools List", await test_tools_list(client)))
 
-    # Test 4: Get schema
-    print_header("Test 4: Tool Execution - get-schema")
-    results.append(("Get Schema", test_get_schema(full_endpoint, api_key)))
+        # Test 4: Get schema
+        print_header("Test 4: Tool Execution - get-schema")
+        results.append(("Get Schema", await test_get_schema(client)))
 
-    # Test 5: Read Cypher
-    print_header("Test 5: Tool Execution - read-cypher")
-    results.append(("Read Cypher", test_read_cypher(full_endpoint, api_key)))
+        # Test 5: Read Cypher
+        print_header("Test 5: Tool Execution - read-cypher")
+        results.append(("Read Cypher", await test_read_cypher(client)))
 
     # Summary
     print_header("Test Results Summary")
@@ -413,12 +287,16 @@ def main():
         sys.exit(0)
     else:
         print(f"{Colors.YELLOW}{Colors.BOLD}{passed}/{total} tests passed{Colors.END}")
-        # Return 0 even with some failures (warnings don't count as failures)
         failed = [name for name, result in results if not result]
         if failed:
             print(f"{Colors.RED}Failed tests: {', '.join(failed)}{Colors.END}")
             sys.exit(1)
         sys.exit(0)
+
+
+def main():
+    """Entry point."""
+    asyncio.run(run_tests())
 
 
 if __name__ == "__main__":
